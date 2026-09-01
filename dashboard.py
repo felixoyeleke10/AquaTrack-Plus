@@ -16,12 +16,7 @@ from aquatrack.detectors import YoloDetector
 from aquatrack.pipeline import process_video
 
 
-st.set_page_config(
-    page_title="AquaTrack",
-    page_icon=":material/water:",
-    layout="centered",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="AquaTrack", page_icon=":material/water:", layout="centered")
 
 
 def utc_now() -> str:
@@ -29,15 +24,14 @@ def utc_now() -> str:
 
 
 def initialize_state() -> None:
-    defaults = {
+    for key, value in {
         "summary": None,
         "video": None,
         "observations": None,
         "manifest": None,
         "source_name": None,
         "review": None,
-    }
-    for key, value in defaults.items():
+    }.items():
         st.session_state.setdefault(key, value)
 
 
@@ -48,72 +42,62 @@ def clear_results() -> None:
 
 def format_duration(seconds: float) -> str:
     minutes, remainder = divmod(int(seconds), 60)
-    return f"{minutes:02d}:{remainder:02d}"
+    return f"{minutes}:{remainder:02d}"
 
 
 initialize_state()
 
 with st.sidebar:
-    st.header("Settings")
-    weights = st.text_input(
-        "Model",
-        "yolo11n.pt",
-        help="Select custom underwater weights when they are available.",
-    )
-    confidence = st.slider("Confidence", 0.05, 0.95, 0.30, 0.05)
-    line_position = st.slider("Counting line", 0.10, 0.90, 0.50, 0.05)
+    st.subheader("Processing")
+    weights = st.text_input("Weights", "yolo11n.pt")
+    confidence = st.slider("Minimum confidence", 0.05, 0.95, 0.30, 0.05)
+    line_position = st.slider("Count line position", 0.10, 0.90, 0.50, 0.05)
     direction = st.segmented_control(
-        "Direction",
-        ["Any", "Up", "Down"],
-        default="Any",
-        width="stretch",
+        "Count direction", ["Any", "Up", "Down"], default="Any", width="stretch"
     )
-
-    with st.expander("Advanced tracking", icon=":material/tune:"):
-        match_iou = st.slider("Association IoU", 0.05, 0.90, 0.30, 0.05)
-        confirmation_hits = st.slider("Confirmation frames", 1, 10, 3)
-        missed_frames = st.slider("Occlusion tolerance", 1, 60, 20)
-
-    st.caption("AquaTrack 0.1 · Research preview")
+    with st.expander("Tracker"):
+        match_iou = st.slider("Match IoU", 0.05, 0.90, 0.30, 0.05)
+        confirmation_hits = st.slider("Frames before confirmation", 1, 10, 3)
+        missed_frames = st.slider("Frames to keep a lost track", 1, 60, 20)
+    if weights == "yolo11n.pt":
+        st.caption("Using the general COCO model. Replace this with trained underwater weights for evaluation.")
 
 st.title("AquaTrack")
-st.write("Detect, track, and count fish in underwater video.")
+st.caption("Underwater video review")
 
 uploaded = st.file_uploader(
-    "Upload a video",
+    "Video",
     type=["mp4", "mov", "avi", "mkv"],
     on_change=clear_results,
 )
-
 if uploaded:
     st.caption(f"{uploaded.name} · {uploaded.size / (1024 * 1024):.1f} MB")
 
-analyze = st.button(
-    "Analyze video",
+process = st.button(
+    "Process video",
     type="primary",
-    icon=":material/play_arrow:",
     width="stretch",
     disabled=uploaded is None,
 )
 
-if analyze and uploaded is not None:
+if process and uploaded is not None:
     try:
         source_bytes = uploaded.getvalue()
         run_id = f"RUN-{uuid.uuid4().hex[:10].upper()}"
+        config = load_config("configs/default.yaml")
+        config.model.weights = weights
+        config.model.confidence = confidence
+        config.tracking.match_iou = match_iou
+        config.tracking.min_confirmed_hits = confirmation_hits
+        config.tracking.max_missed_frames = missed_frames
+        config.counting.line_position = line_position
+        config.counting.direction = (direction or "Any").lower()
 
-        with st.status("Analyzing video", expanded=True) as status:
+        with st.status("Processing video") as status:
             status.write("Loading model")
-            config = load_config("configs/default.yaml")
-            config.model.weights = weights
-            config.model.confidence = confidence
-            config.tracking.match_iou = match_iou
-            config.tracking.min_confirmed_hits = confirmation_hits
-            config.tracking.max_missed_frames = missed_frames
-            config.counting.line_position = line_position
-            config.counting.direction = (direction or "Any").lower()
             detector = YoloDetector(config.model)
+            status.write("Reading frames")
 
-            status.write("Detecting and tracking fish")
             with tempfile.TemporaryDirectory(prefix="aquatrack-") as temporary:
                 work = Path(temporary)
                 source = work / uploaded.name
@@ -122,7 +106,6 @@ if analyze and uploaded is not None:
 
                 summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
                 manifest = {
-                    "schema": "aquatrack.run-manifest.v1",
                     "run_id": run_id,
                     "created_utc": utc_now(),
                     "source": {
@@ -130,16 +113,12 @@ if analyze and uploaded is not None:
                         "size_bytes": len(source_bytes),
                         "sha256": hashlib.sha256(source_bytes).hexdigest(),
                     },
-                    "model": {
-                        "weights": weights,
-                        "confidence": confidence,
-                        "validation": "baseline" if weights == "yolo11n.pt" else "custom",
-                    },
-                    "tracking": {
-                        "method": "greedy_iou_baseline",
+                    "model": {"weights": weights, "confidence": confidence},
+                    "tracker": {
+                        "type": "iou",
                         "match_iou": match_iou,
                         "confirmation_frames": confirmation_hits,
-                        "max_missed_frames": missed_frames,
+                        "lost_track_frames": missed_frames,
                     },
                     "counting": {
                         "line_position": line_position,
@@ -154,99 +133,77 @@ if analyze and uploaded is not None:
                 st.session_state.source_name = uploaded.name
                 st.session_state.review = None
 
-            status.update(label="Analysis complete", state="complete", expanded=False)
+            status.update(label="Done", state="complete", expanded=False)
     except Exception as exc:
-        st.error(f"Analysis failed: {exc}", icon=":material/error:")
+        st.error(f"Could not process the video: {exc}")
 
 summary = st.session_state.summary
 if summary is None:
-    st.space("medium")
-    with st.container(border=True):
-        st.subheader("How it works")
-        st.write("1. Upload an underwater video.")
-        st.write("2. AquaTrack detects fish and follows them across frames.")
-        st.write("3. Review the annotated video and download the results.")
-        st.caption("The default model is a general-purpose baseline. Use trained underwater weights for scientific evaluation.")
+    st.caption("Start with a short SFISHTRACK or BrackishMOT sequence while testing the pipeline.")
 else:
-    st.space("medium")
-    st.subheader("Results")
-    metric_columns = st.columns(4)
-    metric_columns[0].metric("Fish tracks", summary["unique_confirmed_tracks"])
-    metric_columns[1].metric("Crossings", summary["line_crossing_total"])
-    metric_columns[2].metric("Duration", format_duration(summary["duration_seconds"]))
-    metric_columns[3].metric("Frames", f'{summary["frames_processed"]:,}')
+    st.subheader(st.session_state.source_name)
+    metrics = st.columns(3)
+    metrics[0].metric("Tracks", summary["unique_confirmed_tracks"])
+    metrics[1].metric("Crossed line", summary["line_crossing_total"])
+    metrics[2].metric("Video length", format_duration(summary["duration_seconds"]))
 
     st.video(st.session_state.video)
-    st.caption("Green boxes are active tracks. Amber boxes have crossed the counting line.")
 
     observations = pd.read_csv(io.BytesIO(st.session_state.observations))
-    data_tab, review_tab = st.tabs(["Observations", "Review"])
-
-    with data_tab:
-        if observations.empty:
-            st.info("No confirmed fish tracks were found at the current settings.")
-        else:
-            st.dataframe(
-                observations,
-                width="stretch",
-                hide_index=True,
-                column_config={
-                    "confidence": st.column_config.ProgressColumn(
-                        "Confidence", min_value=0.0, max_value=1.0
-                    ),
-                    "timestamp_seconds": st.column_config.NumberColumn("Time (s)", format="%.2f"),
-                },
-            )
-
-    with review_tab:
-        decision = st.segmented_control(
-            "Review decision",
-            ["Accept", "Needs changes", "Reject"],
+    st.subheader("Detections")
+    if observations.empty:
+        st.write("No confirmed tracks at the current settings.")
+    else:
+        st.dataframe(
+            observations,
             width="stretch",
+            height=360,
+            hide_index=True,
+            column_config={
+                "confidence": st.column_config.ProgressColumn(
+                    "Confidence", min_value=0.0, max_value=1.0
+                ),
+                "timestamp_seconds": st.column_config.NumberColumn("Time (s)", format="%.2f"),
+            },
         )
-        notes = st.text_area("Notes", placeholder="Record false detections or other observations")
-        if st.button("Save review", icon=":material/check:"):
-            if not decision:
-                st.warning("Choose a review decision first.")
-            else:
+
+    stem = Path(st.session_state.source_name).stem
+    with st.container(horizontal=True):
+        st.download_button(
+            "Download CSV",
+            st.session_state.observations,
+            f"{stem}_observations.csv",
+            "text/csv",
+        )
+        st.download_button(
+            "Download run JSON",
+            st.session_state.manifest,
+            f"{stem}_run.json",
+            "application/json",
+        )
+
+    with st.expander("Review notes and run information"):
+        decision = st.segmented_control(
+            "Decision", ["Accept", "Needs changes", "Reject"], width="stretch"
+        )
+        notes = st.text_area("Notes")
+        if st.button("Save note"):
+            if decision:
                 st.session_state.review = {
                     "decision": decision,
                     "notes": notes,
                     "reviewed_utc": utc_now(),
                 }
-                st.toast("Review saved", icon=":material/check_circle:")
-
-    with st.expander("Downloads and run details", icon=":material/download:"):
-        stem = Path(st.session_state.source_name).stem
-        with st.container(horizontal=True):
+                st.toast("Saved")
+            else:
+                st.warning("Choose a decision first.")
+        if st.session_state.review:
             st.download_button(
-                "Observations CSV",
-                st.session_state.observations,
-                f"{stem}_observations.csv",
-                "text/csv",
-                icon=":material/table_view:",
-            )
-            st.download_button(
-                "Run manifest",
-                st.session_state.manifest,
-                f"{stem}_manifest.json",
+                "Download review",
+                json.dumps(st.session_state.review, indent=2),
+                f"{stem}_review.json",
                 "application/json",
-                icon=":material/description:",
-            )
-            if st.session_state.review:
-                st.download_button(
-                    "Review JSON",
-                    json.dumps(st.session_state.review, indent=2),
-                    f"{stem}_review.json",
-                    "application/json",
-                    icon=":material/fact_check:",
-                )
-        if weights == "yolo11n.pt":
-            st.warning(
-                "This run used generic model weights. Treat results as a pipeline demonstration, not a validated scientific product.",
-                icon=":material/warning:",
             )
         st.json(json.loads(st.session_state.manifest), expanded=False)
 
-st.space("large")
-st.caption("AquaTrack · Underwater video analysis · Verify model outputs before scientific use")
+st.caption("AquaTrack 0.1")
