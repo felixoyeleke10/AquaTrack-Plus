@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.ipynb_checkpoints/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -11,6 +12,9 @@ data/raw/
 data/processed/
 outputs/
 runs/
+build_cpp/
+build/
+/native/
 *.pt
 *.onnx
 *.mp4

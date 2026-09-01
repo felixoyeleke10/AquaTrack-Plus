@@ -1,9 +1,80 @@
 # AquaTrack
 
-AquaTrack is an underwater-video analysis toolkit for detecting, tracking, and
-counting fish. It converts survey video into an annotated video, frame-level
-observations, and a compact survey summary while keeping detector and tracker
-components replaceable for controlled model comparisons.
+AquaTrack is a native C++ underwater-video review workstation with a Python
+model-development toolchain. It is designed to grow from dataset inspection
+into detection, tracking, annotation correction, survey analysis, and
+reproducible export without tying the product to a browser dashboard.
+
+## Native C++ application
+
+The primary user interface is a Qt 6 desktop application. The current native
+milestone opens BrackishMOT sequences directly, plays their image frames at the
+recorded frame rate, overlays MOT ground truth, filters fish observations, and
+shows live frame and track details in a three-column review workspace.
+
+On Windows, double-click `start_cpp.bat`, or run:
+
+```powershell
+.\build_cpp.bat   # first build, or rebuild after changing C++
+.\start_cpp.bat   # launch AquaTrack+
+```
+
+Requirements are Qt 6.7.2 at `C:\Qt\6.7.2\msvc2019_64`, CMake, Ninja, and the
+Visual Studio 2022 C++ Build Tools. The build script locates Visual Studio with
+`vswhere` and produces `build\AquaTrack.exe`.
+
+In the app, choose **Open sequence** and select a directory containing
+`seqinfo.ini`, `img1`, and `gt\gt.txt`, for example:
+
+```text
+C:\Users\oyele\Downloads\archive\BrackishMOT\train\brackishMOT-51
+```
+
+Run native tests with:
+
+```powershell
+ctest --test-dir build_cpp --output-on-failure
+```
+
+The `src/inference/IDetector.h` interface is the extension point for an
+ONNX Runtime or TensorRT detector. Dataset parsing and tracking stay in the C++
+core, while Qt owns presentation. Python remains useful for preparing data,
+training models, evaluation experiments, and converting trained weights.
+
+## Repository layout
+
+```text
+AquaTrack+/
+|-- CMakeLists.txt                  # Root native build
+|-- CMakePresets.json               # Reproducible configure/build presets
+|-- cmake/                          # One build definition per module
+|-- apps/desktop/                   # Desktop executable and bootstrap
+|-- src/
+|   |-- application/                # Controllers and workflow state
+|   |-- domain/                     # Scientific types and algorithms
+|   |-- data/                       # Dataset/file/database adapters
+|   |-- inference/                  # Replaceable model contracts/backends
+|   |-- ui/                         # Qt presentation only
+|   |   |-- navigation/
+|   |   `-- review/{left,center,right}/
+|   `-- aquatrack/                  # Python ML and batch-processing package
+|-- tools/                          # Dataset preparation and training commands
+|-- tests/unit/native/              # C++ unit tests by module
+|-- tests/*.py                      # Python package tests
+|-- configs/                        # Versioned model/pipeline configuration
+|-- build_cpp.bat                   # Native build entry point
+`-- start_cpp.bat                   # Native application launcher
+```
+
+New product UI belongs in its feature directory under `src/ui`, not in
+`MainWindow`. Workflows belong in `src/application`; dataset formats belong in
+`src/data`; model runtimes belong in `src/inference`; scientific algorithms
+without UI or storage concerns belong in `src/domain`. Add sources to the
+matching file under `cmake/` so module dependencies remain explicit.
+
+The enforced dependency flow is `UI -> Application -> Domain`, with concrete
+data and inference implementations connected at composition time. The current
+review workflow already follows this rule through `ReviewController`.
 
 ## What works in this first slice
 
@@ -14,27 +85,15 @@ components replaceable for controlled model comparisons.
 - Directional line-crossing counts without repeat counting
 - Track trails, identities, classes, confidence, and count overlays
 - Annotated MP4, observation CSV, and summary JSON outputs
-- Streamlit upload/review dashboard
 - Unit tests for configuration, association, expiry, and counting
-- Docker and GitHub Actions configuration
+- GitHub Actions configuration
 
 The default `yolo11n.pt` model is useful for proving the pipeline, but a model
 fine-tuned on underwater survey imagery is required for credible field results.
 
-## Quick start
+## Python model-development tools
 
 Requires Python 3.11 or newer.
-
-### One-click Windows start
-
-Double-click `start.bat`, or run:
-
-```powershell
-.\start.ps1
-```
-
-On its first run, the launcher creates `.venv`, installs AquaTrack and the
-dashboard dependencies, and opens Streamlit. Later runs reuse the environment.
 
 ### Manual setup
 
@@ -42,7 +101,7 @@ dashboard dependencies, and opens Streamlit. Later runs reuse the environment.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -e ".[dev,dashboard]"
+pip install -e ".[dev]"
 ```
 
 Analyze a video:
@@ -55,12 +114,6 @@ The first run may download the configured YOLO weights. To use custom weights:
 
 ```powershell
 aquatrack survey.mp4 --weights models\fish_detector.pt --confidence 0.4
-```
-
-Launch the dashboard:
-
-```powershell
-streamlit run dashboard.py
 ```
 
 ## Outputs
@@ -106,7 +159,6 @@ video -> detector -> tracker -> line counter -> observations
 - `counting.py` handles directional crossings.
 - `pipeline.py` owns video decoding, orchestration, and annotation.
 - `export.py` creates analysis-ready outputs.
-- `dashboard.py` provides an initial scientist-facing review surface.
 
 ## Testing
 
