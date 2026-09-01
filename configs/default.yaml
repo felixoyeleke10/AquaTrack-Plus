@@ -1,0 +1,26 @@
+model:
+  weights: yolo11n.pt
+  confidence: 0.30
+  iou_threshold: 0.50
+  device: auto
+  classes: [fish]
+
+tracking:
+  match_iou: 0.30
+  max_missed_frames: 20
+  min_confirmed_hits: 3
+
+counting:
+  # A horizontal line expressed as a fraction of frame height.
+  line_position: 0.50
+  # Count tracks crossing in either direction: any, up, or down.
+  direction: any
+
+output:
+  draw_confidence: true
+  draw_track_trail: true
+  trail_length: 24
+  save_video: true
+  save_csv: true
+  save_json: true
+
