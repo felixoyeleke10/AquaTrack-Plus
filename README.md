@@ -135,6 +135,63 @@ The next production milestone is a ByteTrack or BoT-SORT adapter evaluated
 against this IoU baseline, followed by an annotation-correction workflow and
 fine-tuning on BrackishMOT, SFISHTRACK, or project-specific survey video.
 
+## Prepare BrackishMOT
+
+The downloaded BrackishMOT data contains image sequences and MOTChallenge ground
+truth, not ordinary video files. Convert it to a six-class YOLO dataset with:
+
+```powershell
+python tools\prepare_brackishmot.py `
+  --source "C:\Users\oyele\Downloads\archive\BrackishMOT" `
+  --output "C:\Users\oyele\Downloads\archive\BrackishMOT-YOLO"
+```
+
+The converter preserves the official test sequences, creates a deterministic
+sequence-level validation split from the training sequences, and uses hard links
+when possible to avoid duplicating the image data. Keep the prepared output on
+the same drive as the source if you want hard links; cross-drive output falls
+back to full image copies. It writes:
+
+```text
+BrackishMOT-YOLO/
+|-- images/{train,val,test}/
+|-- labels/{train,val,test}/
+|-- dataset.yaml
+`-- manifest.json
+```
+
+To merge the original `fish` and `small fish` categories into one binary class:
+
+```powershell
+python tools\prepare_brackishmot.py `
+  --source "C:\Users\oyele\Downloads\archive\BrackishMOT" `
+  --output data\brackishmot_fish `
+  --fish-only
+```
+
+Render the supplied ground truth for a sequence before training:
+
+```powershell
+python tools\preview_brackishmot.py `
+  --sequence "C:\Users\oyele\Downloads\archive\BrackishMOT\train\brackishMOT-51" `
+  --output outputs\brackishMOT-51_ground_truth.mp4 `
+  --fish-only
+```
+
+Train a YOLO model after preparation:
+
+```powershell
+python tools\train_brackishmot.py `
+  --data "C:\Users\oyele\Downloads\archive\BrackishMOT-YOLO\dataset.yaml" `
+  --epochs 75 `
+  --image-size 960 `
+  --batch 8 `
+  --device 0
+```
+
+The best weights are written below `runs/brackishmot/`. Select the resulting
+`best.pt` file in AquaTrack's sidebar for video inference.
+
 ## Scientific limitations
 
 - A visual detection is an observation, not proof of absolute abundance.
