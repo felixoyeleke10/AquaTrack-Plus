@@ -25,6 +25,19 @@ fine-tuned on underwater survey imagery is required for credible field results.
 
 Requires Python 3.11 or newer.
 
+### One-click Windows start
+
+Double-click `start.bat`, or run:
+
+```powershell
+.\start.ps1
+```
+
+On its first run, the launcher creates `.venv`, installs AquaTrack and the
+dashboard dependencies, and opens Streamlit. Later runs reuse the environment.
+
+### Manual setup
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1

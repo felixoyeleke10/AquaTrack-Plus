@@ -16,5 +16,5 @@ runs/
 *.mp4
 *.avi
 *.mov
+# Allow a small repository-hosted demonstration clip when one is added.
 !assets/demo.mp4
-
