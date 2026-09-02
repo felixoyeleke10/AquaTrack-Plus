@@ -1,0 +1,110 @@
+#include "application/controllers/ProjectController.h"
+
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QUuid>
+
+#include <algorithm>
+
+namespace aquatrack::application {
+
+ProjectController::ProjectController(QObject *parent) : QObject(parent) {}
+
+const domain::ProjectManifest *ProjectController::project() const {
+  return m_manifest ? &*m_manifest : nullptr;
+}
+
+QString ProjectController::observationStorePath() const {
+  if (!m_manifest)
+    return {};
+  const QString configured = QString::fromStdString(m_manifest->databasePath);
+  if (QFileInfo(configured).isAbsolute())
+    return QDir::cleanPath(configured);
+  return QDir(QFileInfo(m_path).absolutePath()).filePath(configured);
+}
+
+bool ProjectController::createProject(const QString &path, const QString &name,
+                                      QString *error) {
+  if (name.trimmed().isEmpty()) {
+    if (error)
+      *error = QStringLiteral("Project name is required");
+    return false;
+  }
+  const auto now = QDateTime::currentMSecsSinceEpoch();
+  domain::ProjectManifest candidate{
+      .projectId =
+          QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString(),
+      .name = name.trimmed().toStdString(),
+      .createdAtMs = now,
+      .updatedAtMs = now,
+  };
+  if (!m_store.save(path, candidate, error))
+    return false;
+  m_manifest = std::move(candidate);
+  m_path = QFileInfo(path).absoluteFilePath();
+  emit projectChanged();
+  emit projectSaved(m_path);
+  return true;
+}
+
+bool ProjectController::openProject(const QString &path, QString *error) {
+  domain::ProjectManifest candidate;
+  if (!m_store.load(path, candidate, error))
+    return false;
+  m_manifest = std::move(candidate);
+  m_path = QFileInfo(path).absoluteFilePath();
+  emit projectChanged();
+  return true;
+}
+
+bool ProjectController::saveProject(QString *error) {
+  if (!m_manifest) {
+    if (error)
+      *error = QStringLiteral("No project is open");
+    return false;
+  }
+  m_manifest->updatedAtMs = QDateTime::currentMSecsSinceEpoch();
+  if (!m_store.save(m_path, *m_manifest, error))
+    return false;
+  emit projectSaved(m_path);
+  return true;
+}
+
+bool ProjectController::addMedia(const QString &path, QString *error) {
+  if (!m_manifest) {
+    if (error)
+      *error = QStringLiteral("Open or create a project before adding media");
+    return false;
+  }
+  const auto normalized =
+      QDir::cleanPath(QFileInfo(path).absoluteFilePath()).toStdString();
+  if (std::find(m_manifest->mediaPaths.begin(), m_manifest->mediaPaths.end(),
+                normalized) == m_manifest->mediaPaths.end()) {
+    m_manifest->mediaPaths.push_back(normalized);
+    emit projectChanged();
+  }
+  return true;
+}
+
+bool ProjectController::removeMedia(const QString &path, QString *error) {
+  if (!m_manifest) {
+    if (error)
+      *error = QStringLiteral("No project is open");
+    return false;
+  }
+  const auto normalized =
+      QDir::cleanPath(QFileInfo(path).absoluteFilePath()).toStdString();
+  auto &media = m_manifest->mediaPaths;
+  const auto removed = std::remove(media.begin(), media.end(), normalized);
+  if (removed == media.end()) {
+    if (error)
+      *error = QStringLiteral("That media is not part of this project");
+    return false;
+  }
+  media.erase(removed, media.end());
+  emit projectChanged();
+  return true;
+}
+
+} // namespace aquatrack::application

@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 set "QT_DIR=C:\Qt\6.7.2\msvc2019_64"
-set "BUILD_DIR=build"
+if not defined BUILD_DIR set "BUILD_DIR=build"
 set "VCVARS="
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" for /f "usebackq tokens=*" %%V in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VCVARS=%%V\VC\Auxiliary\Build\vcvars64.bat"
@@ -28,7 +28,7 @@ if not exist "%QT_DIR%\bin\windeployqt.exe" (
 call "%VCVARS%" >nul 2>&1
 cmake -S . -B "%BUILD_DIR%" -G "Ninja" -DCMAKE_PREFIX_PATH="%QT_DIR%" -DCMAKE_BUILD_TYPE=Debug
 if errorlevel 1 exit /b 1
-cmake --build "%BUILD_DIR%" --parallel
+cmake --build "%BUILD_DIR%" --parallel 2
 if errorlevel 1 exit /b 1
 "%QT_DIR%\bin\windeployqt.exe" "%BUILD_DIR%\AquaTrack.exe" >nul
 echo Built %BUILD_DIR%\AquaTrack.exe

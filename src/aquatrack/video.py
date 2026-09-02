@@ -98,6 +98,7 @@ def frame_quality_metrics(frame: np.ndarray) -> dict[str, float]:
     blue_mean, green_mean, red_mean = (float(frame[:, :, i].mean()) for i in range(3))
     return {
         "brightness": float(gray.mean()),
+        "contrast": float(gray.std()),
         "sharpness": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
         "blue_mean": blue_mean,
         "green_mean": green_mean,

@@ -25,6 +25,8 @@ notebooks = [
   "torch>=2.2",
   "torchvision>=0.17",
   "fiftyone>=0.25,<1",
+  "motmetrics>=1.4,<2",
+  "torchmetrics[detection]>=1.9,<2",
 ]
 
 [project.scripts]

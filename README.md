@@ -7,21 +7,27 @@ reproducible export without tying the product to a browser dashboard.
 
 ## Native C++ application
 
-The primary user interface is a Qt 6 desktop application. The current native
-milestone opens BrackishMOT sequences directly, plays their image frames at the
-recorded frame rate, overlays MOT ground truth, filters fish observations, and
-shows live frame and track details in a three-column review workspace.
+The primary product is a Qt 6 desktop application. Its seven-page shell provides
+project management, media references, a four-region video review workspace,
+survey analytics, dataset discovery, model-registry inspection, and validated
+settings. BrackishMOT sequences play at their recorded frame rate with MOT
+ground truth, track filtering, frame metrics, and a catalog-to-review workflow.
 
 On Windows, double-click `start_cpp.bat`, or run:
 
 ```powershell
 .\build_cpp.bat   # first build, or rebuild after changing C++
 .\start_cpp.bat   # launch AquaTrack+
+.\test_cpp.bat    # rebuild and run every native test
+.\start_cli.bat --help
 ```
 
 Requirements are Qt 6.7.2 at `C:\Qt\6.7.2\msvc2019_64`, CMake, Ninja, and the
-Visual Studio 2022 C++ Build Tools. The build script locates Visual Studio with
-`vswhere` and produces `build\AquaTrack.exe`.
+Visual Studio 2022 C++ Build Tools. The build is capped at two workers so it can
+coexist with model training. It produces `build\AquaTrack.exe` and the headless
+`build\aquatrack-cli.exe`, then deploys the required Qt runtime files.
+The QC script uses a separate `build_qc` tree, so tests can run while the normal
+desktop executable is open.
 
 In the app, choose **Open sequence** and select a directory containing
 `seqinfo.ini`, `img1`, and `gt\gt.txt`, for example:
@@ -33,7 +39,7 @@ C:\Users\oyele\Downloads\archive\BrackishMOT\train\brackishMOT-51
 Run native tests with:
 
 ```powershell
-ctest --test-dir build_cpp --output-on-failure
+.\test_cpp.bat
 ```
 
 The `src/inference/IDetector.h` interface is the extension point for an
@@ -48,12 +54,16 @@ AquaTrack+/
 |-- CMakeLists.txt                  # Root native build
 |-- CMakePresets.json               # Reproducible configure/build presets
 |-- cmake/                          # One build definition per module
-|-- apps/desktop/                   # Desktop executable and bootstrap
+|-- apps/{desktop,cli}/             # Desktop and headless entry points
 |-- src/
 |   |-- application/                # Controllers and workflow state
 |   |-- domain/                     # Scientific types and algorithms
 |   |-- data/                       # Dataset/file/database adapters
-|   |-- inference/                  # Replaceable model contracts/backends
+|   |-- inference/                  # Replaceable detector contracts/backends
+|   |-- pipeline/                   # Frame and cancellable batch processing
+|   |-- analytics/                  # Survey summaries and time bins
+|   |-- export/                     # Scientific CSV and MOT exports
+|   |-- system/                     # Runtime state, settings, JSONL logs
 |   |-- ui/                         # Qt presentation only
 |   |   |-- navigation/
 |   |   `-- review/{left,center,right}/
@@ -63,6 +73,8 @@ AquaTrack+/
 |-- tests/*.py                      # Python package tests
 |-- configs/                        # Versioned model/pipeline configuration
 |-- build_cpp.bat                   # Native build entry point
+|-- test_cpp.bat                    # Build and full native QC
+|-- start_cli.bat                   # Headless automation entry point
 `-- start_cpp.bat                   # Native application launcher
 ```
 
@@ -72,24 +84,34 @@ New product UI belongs in its feature directory under `src/ui`, not in
 without UI or storage concerns belong in `src/domain`. Add sources to the
 matching file under `cmake/` so module dependencies remain explicit.
 
-The enforced dependency flow is `UI -> Application -> Domain`, with concrete
-data and inference implementations connected at composition time. The current
-review workflow already follows this rule through `ReviewController`.
+Dependencies point inward: UI uses application controllers; controllers use
+data/domain services; pipeline composes detector and tracker contracts; domain
+types do not depend on UI or storage. `MainWindow` is only the composition root.
 
-## What works in this first slice
+## Native capabilities
 
-- YOLO inference through a configurable Ultralytics adapter
-- Class-name filtering for fish or custom species models
-- Transparent IoU multi-object tracking baseline
-- Track confirmation and short-term occlusion tolerance
-- Directional line-crossing counts without repeat counting
-- Track trails, identities, classes, confidence, and count overlays
-- Annotated MP4, observation CSV, and summary JSON outputs
-- Unit tests for configuration, association, expiry, and counting
-- GitHub Actions configuration
+- Atomic `.aqp` projects, JSON settings, structured JSONL logs, and a durable,
+  schema-versioned scientific observation repository
+- BrackishMOT and YOLO dataset catalog with stable IDs and validation warnings
+- Detector interface, confidence/geometry filtering, IoU tracking, confirmed
+  observation generation, provenance, latency measurement, and cancellation
+- Survey summaries, time bins, deterministic CSV/MOT exports, and model manifests
+- Native unit, persistence, integration, CLI, and window smoke tests
 
-The default `yolo11n.pt` model is useful for proving the pipeline, but a model
-fine-tuned on underwater survey imagery is required for credible field results.
+The C++ detector backend is deliberately replaceable. Python currently owns
+training and weight conversion; an ONNX Runtime or TensorRT implementation can
+plug into `IDetector` without changing tracking, analytics, storage, or UI code.
+
+## Native CLI
+
+```powershell
+.\start_cli.bat datasets "D:\data" --json
+.\start_cli.bat project "D:\surveys\harbour.aqp" --json
+```
+
+Exit code `0` means success, `1` means invalid usage, and `2` means the requested
+project or dataset could not be validated. JSON output is intended for CI,
+PowerShell, and downstream scientific workflow automation.
 
 ## Python model-development tools
 
