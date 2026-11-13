@@ -1,41 +1,65 @@
 #include "ui/review/ReviewPage.h"
 
+#include "application/AnnotationImporter.h"
 #include "application/controllers/AnnotationController.h"
-#include "application/controllers/ExportController.h"
 #include "application/controllers/ReviewController.h"
+#include "data/media/FrameDecoder.h"
+#include "data/media/VideoProbe.h"
 #include "data/observations/JsonObservationRepository.h"
-#include "ui/review/RuntimeStrip.h"
+#include "ui/AppTheme.h"
 #include "ui/review/center/ReviewPanel.h"
 #include "ui/review/center/video/SequenceView.h"
 #include "ui/review/left/SurveyPanel.h"
 #include "ui/review/right/InsightPanel.h"
 
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QImageReader>
 #include <QInputDialog>
+#include <QLocale>
 #include <QMessageBox>
+#include <QPointer>
+#include <QShortcut>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
+#include <exception>
 #include <map>
 #include <set>
 #include <utility>
 
 namespace analytics = aquatrack::analytics;
 namespace domain = aquatrack::domain;
+namespace media = aquatrack::media;
 
 namespace {
 
+// `name` inside `folder` (created on demand), or just `name` without one.
+QString suggestedPath(const QString& folder, const QString& name)
+{
+    if (folder.isEmpty())
+        return name;
+    QDir().mkpath(folder);
+    return QDir(folder).filePath(name);
+}
+
 constexpr int kFilmstripFrames = 8;
 constexpr int kTrailLength = 24;
+constexpr int kThumbnailWidth = 190;
 
 int classIdForName(const QString& name)
 {
-    for (int classId = 1; classId <= 6; ++classId)
-        if (aquatrack::BrackishMotSequence::className(classId) == name)
-            return classId;
-    return 0;
+    return aquatrack::BrackishMotSequence::classIdForName(name);
+}
+
+QString frameRateText(double rate)
+{
+    return std::abs(rate - std::round(rate)) < 0.01 ? QString::number(int(std::lround(rate)))
+                                                     : QString::number(rate, 'f', 2);
 }
 
 }  // namespace
@@ -43,8 +67,10 @@ int classIdForName(const QString& name)
 ReviewPage::ReviewPage(QWidget* parent)
     : QWidget(parent),
       m_controller(new aquatrack::application::ReviewController(this)),
-      m_exportController(new aquatrack::application::ExportController(this))
+      m_analysis(new aquatrack::application::AnalysisRunner(this))
 {
+    m_thumbnailPool.setMaxThreadCount(1);
+
     auto* page = new QVBoxLayout(this);
     page->setContentsMargins(12, 12, 12, 12);
     page->setSpacing(10);
@@ -60,32 +86,10 @@ ReviewPage::ReviewPage(QWidget* parent)
     columns->addWidget(m_insightPanel);
     page->addLayout(columns, 1);
 
-    m_runtime = new RuntimeStrip(this);
-    page->addWidget(m_runtime);
-
     // ---- Left rail ----------------------------------------------------
-    connect(m_surveyPanel, &SurveyPanel::openSequenceRequested, this, &ReviewPage::openSequence);
     connect(m_surveyPanel, &SurveyPanel::filtersChanged, this, &ReviewPage::applyFilters);
-    connect(m_surveyPanel, &SurveyPanel::exportCsvRequested, this, [this] {
-        const QString path = QFileDialog::getSaveFileName(this,
-            QStringLiteral("Export observations"), QStringLiteral("observations.csv"),
-            QStringLiteral("CSV files (*.csv)"));
-        if (path.isEmpty())
-            return;
-        QString error;
-        if (!m_exportController->exportCsv(path, observations(), &error))
-            QMessageBox::warning(this, QStringLiteral("Export failed"), error);
-    });
-    connect(m_surveyPanel, &SurveyPanel::exportMotRequested, this, [this] {
-        const QString path = QFileDialog::getSaveFileName(this,
-            QStringLiteral("Export MOTChallenge"), QStringLiteral("gt.txt"),
-            QStringLiteral("Text files (*.txt)"));
-        if (path.isEmpty())
-            return;
-        QString error;
-        if (!m_exportController->exportMot(path, observations(), &error))
-            QMessageBox::warning(this, QStringLiteral("Export failed"), error);
-    });
+    connect(m_surveyPanel, &SurveyPanel::sequenceFileRequested, this,
+            [this](int frame) { m_controller->setFrame(frame); });
 
     // ---- Centre -------------------------------------------------------
     connect(m_reviewPanel, &ReviewPanel::playToggled, m_controller,
@@ -93,8 +97,46 @@ ReviewPage::ReviewPage(QWidget* parent)
     connect(m_reviewPanel, &ReviewPanel::frameRequested, m_controller,
             &aquatrack::application::ReviewController::setFrame);
     connect(m_reviewPanel, &ReviewPanel::stepRequested, this, [this](int delta) {
-        m_controller->setFrame(m_currentFrame + delta);
+        m_controller->stopPlayback();
+        m_controller->setFrame(std::clamp(m_currentFrame + delta, 1, std::max(1, m_sequenceFrames)));
     });
+    connect(m_reviewPanel, &ReviewPanel::snapshotRequested, this, &ReviewPage::saveSnapshot);
+    connect(m_reviewPanel, &ReviewPanel::fullscreenRequested, this, [this] {
+        QWidget* top = window();
+        if (top->isFullScreen())
+            top->showNormal();
+        else
+            top->showFullScreen();
+    });
+    connect(m_reviewPanel, &ReviewPanel::importAnnotationsRequested, this,
+            &ReviewPage::chooseAnnotationFile);
+    connect(m_reviewPanel, &ReviewPanel::analyzeRequested, this, [this] {
+        if (!m_annotationController) {
+            QMessageBox::information(this, QStringLiteral("Detect & track"),
+                                     QStringLiteral("Create or open a project first: detected "
+                                                    "tracks are saved in it."));
+            return;
+        }
+        emit analyzeRequested();
+    });
+    connect(m_reviewPanel, &ReviewPanel::analysisCancelRequested, this, &ReviewPage::cancelAnalysis);
+
+    // ---- Keyboard -----------------------------------------------------
+    const auto shortcut = [this](const QKeySequence& keys, auto&& action) {
+        auto* item = new QShortcut(keys, this);
+        item->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(item, &QShortcut::activated, this, std::forward<decltype(action)>(action));
+    };
+    shortcut(QKeySequence(Qt::Key_Space), [this] { m_controller->togglePlayback(); });
+    shortcut(QKeySequence(Qt::Key_K), [this] { m_controller->togglePlayback(); });
+    shortcut(QKeySequence(Qt::Key_Right), [this] { emit m_reviewPanel->stepRequested(1); });
+    shortcut(QKeySequence(Qt::Key_Left), [this] { emit m_reviewPanel->stepRequested(-1); });
+    shortcut(QKeySequence(Qt::SHIFT | Qt::Key_Right),
+             [this] { emit m_reviewPanel->stepRequested(std::max(1, m_frameRate)); });
+    shortcut(QKeySequence(Qt::SHIFT | Qt::Key_Left),
+             [this] { emit m_reviewPanel->stepRequested(-std::max(1, m_frameRate)); });
+    shortcut(QKeySequence(Qt::Key_Home), [this] { m_controller->setFrame(1); });
+    shortcut(QKeySequence(Qt::Key_End), [this] { m_controller->setFrame(m_sequenceFrames); });
 
     // ---- Right rail ---------------------------------------------------
     connect(m_insightPanel, &InsightPanel::relabelRequested, this, [this](const QString& id) {
@@ -117,19 +159,19 @@ ReviewPage::ReviewPage(QWidget* parent)
             return;
         if (m_annotationController->relabel(id.toStdString(), label.toStdString(),
                                             static_cast<float>(confidence)))
-            refreshFrameDetail();
+            annotationsEdited();
     });
     connect(m_insightPanel, &InsightPanel::deleteRequested, this, [this](const QString& id) {
         if (m_annotationController && m_annotationController->erase(id.toStdString()))
-            refreshFrameDetail();
+            annotationsEdited();
     });
     connect(m_insightPanel, &InsightPanel::undoRequested, this, [this] {
         if (m_annotationController && m_annotationController->undo())
-            refreshFrameDetail();
+            annotationsEdited();
     });
     connect(m_insightPanel, &InsightPanel::redoRequested, this, [this] {
         if (m_annotationController && m_annotationController->redo())
-            refreshFrameDetail();
+            annotationsEdited();
     });
     connect(m_insightPanel, &InsightPanel::saveRequested, this, [this] {
         if (!m_annotationController)
@@ -139,16 +181,13 @@ ReviewPage::ReviewPage(QWidget* parent)
             QMessageBox::warning(this, QStringLiteral("Save annotations failed"), error);
         refreshHistoryState();
     });
-    connect(m_insightPanel, &InsightPanel::mergeTracksRequested, this,
-            [this](qint64 source, qint64 target) {
-                QMessageBox::information(
-                    this, QStringLiteral("Merge tracks"),
-                    QStringLiteral("Merging track %1 into %2 is not wired to the annotation "
-                                   "session yet. AnnotationSession::mergeTracks exists in the "
-                                   "domain layer but AnnotationController does not expose it.")
-                        .arg(source)
-                        .arg(target));
-            });
+    connect(m_insightPanel, &InsightPanel::mergeTracksRequested, this, &ReviewPage::mergeTracks);
+    connect(m_insightPanel, &InsightPanel::allEventsRequested, m_reviewPanel,
+            &ReviewPanel::showEventsTab);
+    connect(m_reviewPanel, &ReviewPanel::timestampRequested, this, [this](qint64 milliseconds) {
+        if (m_controller->isLoaded())
+            m_controller->setFrame(frameForTimestamp(milliseconds));
+    });
     connect(m_insightPanel, &InsightPanel::frameRequested, this, [this](int timestampMs) {
         // The insight panel reports a timestamp; convert to a frame index.
         m_controller->setFrame(frameForTimestamp(timestampMs));
@@ -157,32 +196,26 @@ ReviewPage::ReviewPage(QWidget* parent)
     // ---- Controller ---------------------------------------------------
     connect(m_controller, &aquatrack::application::ReviewController::sequenceLoaded, this,
             [this](const QString& name, int frames, int frameRate, int width, int height) {
+                const auto& source = m_controller->source();
+                m_sequenceDirectory = source.path();
+                m_videoId = name.toStdString();
                 m_sequenceFrames = frames;
                 m_frameRate = std::max(1, frameRate);
                 m_imageWidth = width;
                 m_imageHeight = height;
+                m_currentFrame = 0;
+                m_currentImage = QImage();
+                m_groundTruth = m_controller->observations();
 
-                m_surveyPanel->setSequenceInfo(name, frames, frameRate, width, height);
-                m_surveyPanel->setExportEnabled(true);
-                m_reviewPanel->configureSequence(frames, frameRate);
-                m_runtime->setSequenceState(true, frames);
-
-                if (m_annotationController) {
-                    const auto videoId = name.toStdString();
-                    if (m_repository->containsVideo(videoId)) {
-                        m_annotationController->open(videoId);
-                    } else {
-                        m_annotationController->begin(videoId, m_controller->observations());
-                        QString error;
-                        if (!m_annotationController->save(&error))
-                            QMessageBox::warning(
-                                this, QStringLiteral("Observation storage failed"), error);
-                    }
-                    m_insightPanel->setEditingEnabled(true);
-                }
+                m_reviewPanel->configureSequence(frames, frameRate, source.durationMs());
+                updateSequenceNavigator();
+                startAnnotationSession();
                 buildFilmstrip();
                 rebuildAnalytics();
                 refreshHistoryState();
+                refreshHeader();
+                emit observationsChanged();
+                emit sequenceOpened(m_sequenceDirectory);
             });
     connect(m_controller, &aquatrack::application::ReviewController::frameReady, this,
             [this](const QImage& image, QVector<aquatrack::GroundTruth> annotations, int frame,
@@ -194,10 +227,139 @@ ReviewPage::ReviewPage(QWidget* parent)
                 QMessageBox::warning(this, QStringLiteral("Review error"), error);
             });
 
+    // ---- Detection ----------------------------------------------------
+    connect(m_analysis, &aquatrack::application::AnalysisRunner::progress, this,
+            [this](int done, int total, const QString& text) {
+                m_reviewPanel->setAnalysisProgress(done, total, text);
+            });
+    connect(m_analysis, &aquatrack::application::AnalysisRunner::finished, this,
+            &ReviewPage::analysisFinished);
+    connect(m_analysis, &aquatrack::application::AnalysisRunner::failed, this,
+            [this](const QString& error) {
+                m_reviewPanel->setAnalysisRunning(false);
+                if (error != QLatin1String("Cancelled"))
+                    QMessageBox::warning(this, QStringLiteral("Detection failed"), error);
+            });
+
     applyFilters();
 }
 
-ReviewPage::~ReviewPage() = default;
+ReviewPage::~ReviewPage()
+{
+    m_filmstripGeneration->fetch_add(1);
+    m_thumbnailPool.clear();
+    m_thumbnailPool.waitForDone();
+}
+
+const media::MediaSource& ReviewPage::source() const
+{
+    return m_controller->source();
+}
+
+void ReviewPage::setFrameCacheSize(int frames)
+{
+    m_controller->setDecoderCacheSize(frames);
+}
+
+void ReviewPage::closeMedia()
+{
+    if (m_analysis->isRunning())
+        m_analysis->cancel();
+    m_reviewPanel->setAnalysisRunning(false);
+    m_controller->close();
+    m_sequenceDirectory.clear();
+    m_videoId.clear();
+    m_groundTruth.clear();
+    m_annotations.clear();
+    m_currentImage = QImage();
+    m_currentFrame = 0;
+    m_sequenceFrames = 0;
+    m_filmstripGeneration->fetch_add(1);
+    m_reviewPanel->filmstrip()->clear();
+    m_reviewPanel->sequenceView()->clear();
+    m_reviewPanel->configureSequence(0, m_frameRate, 0);
+    // A session on the old media would otherwise keep showing (and saving)
+    // its annotations until the store switches.
+    if (m_annotationController)
+        m_annotationController->begin({}, {});
+    updateSequenceNavigator();
+    rebuildFrameIndex();
+    rebuildAnalytics();
+    refreshFrameDetail();
+    refreshHistoryState();
+    refreshHeader();
+    emit observationsChanged();
+}
+
+void ReviewPage::goToFrame(int frame)
+{
+    m_controller->stopPlayback();
+    m_controller->setFrame(std::clamp(frame, 1, std::max(1, m_sequenceFrames)));
+}
+
+bool ReviewPage::migrateAnnotations(const QString& fromId, const QString& toId, QString* error)
+{
+    if (!m_repository || fromId == toId)
+        return true;
+    const std::string from = fromId.toStdString();
+    const std::string to = toId.toStdString();
+    if (!m_repository->containsVideo(from) || m_repository->containsVideo(to))
+        return true;
+    auto moved = m_repository->observationsForVideo(from);
+    for (auto& observation : moved) {
+        observation.videoId = to;
+        if (observation.id.rfind(from + ":", 0) == 0)
+            observation.id = to + observation.id.substr(from.size());
+    }
+    std::string message;
+    if (!m_repository->replaceObservationsForVideo(to, moved, message) ||
+        !m_repository->removeVideo(from, message)) {
+        if (error)
+            *error = QString::fromStdString(message);
+        return false;
+    }
+    return true;
+}
+
+std::vector<domain::Observation> ReviewPage::storedObservations(const QString& videoId) const
+{
+    const std::string id = videoId.toStdString();
+    if (!m_repository || !m_repository->containsVideo(id))
+        return {};
+    return m_repository->observationsForVideo(id);
+}
+
+bool ReviewPage::replaceStoredObservations(const QString& fromId, const QString& toId,
+                                           std::vector<domain::Observation> observations,
+                                           QString* error)
+{
+    if (!m_repository)
+        return true;
+    const std::string from = fromId.toStdString();
+    const std::string to = toId.toStdString();
+    if (!m_repository->containsVideo(from) && observations.empty())
+        return true;
+    // Ids begin with the media's name; keep that true after a rename.
+    for (auto& observation : observations) {
+        observation.videoId = to;
+        if (from != to && observation.id.rfind(from + ":", 0) == 0)
+            observation.id = to + observation.id.substr(from.size());
+    }
+    std::string message;
+    bool ok = m_repository->replaceObservationsForVideo(to, observations, message);
+    if (ok && from != to)
+        ok = m_repository->removeVideo(from, message);
+    if (!ok && error)
+        *error = QString::fromStdString(message);
+    return ok;
+}
+
+const std::vector<domain::Observation>& ReviewPage::allObservations() const
+{
+    if (m_annotationController && m_annotationController->hasSession())
+        return m_annotationController->observations();
+    return m_groundTruth;
+}
 
 std::vector<domain::Observation> ReviewPage::observations() const
 {
@@ -206,10 +368,245 @@ std::vector<domain::Observation> ReviewPage::observations() const
     return m_controller->observations();
 }
 
-void ReviewPage::loadSequence(const QString& directory)
+bool ReviewPage::loadSequence(const QString& path)
 {
-    m_sequenceDirectory = directory;
-    m_controller->loadSequence(directory);
+    if (!maybeSaveAnnotations())
+        return false;
+    return m_controller->loadSequence(path);
+}
+
+void ReviewPage::refreshHeader()
+{
+    const auto& source = m_controller->source();
+    if (!source.isOpen()) {
+        m_reviewPanel->setMediaTitle(QStringLiteral("Nothing open"),
+                                     QStringLiteral("Open a sequence or video from the Video library"));
+        m_reviewPanel->setAnnotationSource(QString(), aquatrack::ui::palette::TextDim);
+        return;
+    }
+    const QLocale locale = QLocale::system();
+    QStringList parts;
+    switch (source.kind()) {
+    case media::MediaKind::ImageSequence:
+        parts << QStringLiteral("Sequence of image frames");
+        break;
+    case media::MediaKind::VideoFile:
+        parts << QStringLiteral("Video");
+        break;
+    case media::MediaKind::VideoSequence:
+        parts << QStringLiteral("Sequence of %1 videos").arg(source.clips().size());
+        break;
+    default:
+        break;
+    }
+    parts << QStringLiteral("%1 frames").arg(locale.toString(source.frameCount()))
+          << QStringLiteral("%1 fps").arg(frameRateText(source.frameRate()))
+          << QStringLiteral("%1×%2").arg(source.frameSize().width()).arg(source.frameSize().height())
+          << media::formatDuration(source.durationMs());
+    m_reviewPanel->setMediaTitle(source.name(), parts.join(QStringLiteral("  ·  ")));
+
+    const auto& all = allObservations();
+    if (all.empty()) {
+        m_reviewPanel->setAnnotationSource(QStringLiteral("No annotations yet"),
+                                           aquatrack::ui::palette::TextDim);
+        return;
+    }
+    std::set<domain::LocalTrackId> tracks;
+    std::size_t unverified = 0;
+    for (const auto& observation : all) {
+        tracks.insert(observation.localTrackId);
+        if (!observation.humanVerified)
+            ++unverified;
+    }
+    if (unverified > 0)
+        m_reviewPanel->setAnnotationSource(
+            QStringLiteral("Model detections · %1 tracks").arg(locale.toString(int(tracks.size()))),
+            aquatrack::ui::palette::Warning);
+    else
+        m_reviewPanel->setAnnotationSource(
+            QStringLiteral("Verified annotations · %1 tracks")
+                .arg(locale.toString(int(tracks.size()))),
+            aquatrack::ui::palette::Success);
+}
+
+void ReviewPage::updateSequenceNavigator()
+{
+    const auto& source = m_controller->source();
+    if (!source.isOpen()) {
+        m_surveyPanel->clearSequence();
+        return;
+    }
+    QVector<SurveyPanel::Entry> entries;
+    QString detail;
+    const QLocale locale = QLocale::system();
+    const QString frameCount = QStringLiteral("%1 frames").arg(locale.toString(source.frameCount()));
+    switch (source.kind()) {
+    case media::MediaKind::ImageSequence: {
+        // Listed from the sequence's own numbering rather than by walking
+        // the folder, which takes seconds for long sequences.
+        const QDir root(source.path());
+        entries.push_back({QStringLiteral("seqinfo.ini"), QString(), 0});
+        entries.push_back({QStringLiteral("gt/gt.txt"), QString(), 0});
+        for (int frame = 1; frame <= source.frameCount(); ++frame)
+            entries.push_back({root.relativeFilePath(source.imagePath(frame)),
+                               locale.toString(frame), frame});
+        detail = QStringLiteral("Image frames  \u00b7  %1").arg(frameCount);
+        break;
+    }
+    case media::MediaKind::VideoFile:
+    case media::MediaKind::VideoSequence: {
+        const auto& clips = source.clips();
+        for (int index = 0; index < clips.size(); ++index) {
+            const auto& clip = clips.at(index);
+            const QString name = QFileInfo(clip.path).fileName();
+            entries.push_back({clips.size() > 1 ? QStringLiteral("%1.  %2").arg(index + 1).arg(name)
+                                                : name,
+                               media::formatDuration(clip.durationMs), clip.firstFrame});
+        }
+        detail = clips.size() > 1
+                     ? QStringLiteral("%1 clips  \u00b7  %2  \u00b7  %3")
+                           .arg(clips.size())
+                           .arg(frameCount, media::formatDuration(source.durationMs()))
+                     : QStringLiteral("Video  \u00b7  %1  \u00b7  %2")
+                           .arg(frameCount, media::formatDuration(source.durationMs()));
+        break;
+    }
+    default:
+        break;
+    }
+    m_surveyPanel->setSequence(source.name(), QDir::toNativeSeparators(source.path()), detail,
+                               entries);
+}
+
+void ReviewPage::setProjectFolders(const QString& exports, const QString& annotations,
+                                   const QString& snapshots)
+{
+    m_exportsFolder = exports;
+    m_annotationsFolder = annotations;
+    m_snapshotsFolder = snapshots;
+}
+
+bool ReviewPage::hasUnsavedAnnotations() const
+{
+    return m_annotationController && m_annotationController->isDirty();
+}
+
+bool ReviewPage::maybeSaveAnnotations()
+{
+    if (!hasUnsavedAnnotations())
+        return true;
+    const auto choice = QMessageBox::warning(
+        this, QStringLiteral("Unsaved annotation edits"),
+        QStringLiteral("You have unsaved annotation edits for %1. Save them before continuing?")
+            .arg(QString::fromStdString(m_annotationController->videoId())),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    if (choice == QMessageBox::Cancel)
+        return false;
+    if (choice == QMessageBox::Save) {
+        QString error;
+        if (!m_annotationController->save(&error)) {
+            QMessageBox::warning(this, QStringLiteral("Save annotations failed"), error);
+            return false;
+        }
+        refreshHistoryState();
+    } else {
+        // Discard means discard: go back to what the store holds, so the
+        // edits cannot resurface if the same project or sequence stays open.
+        startAnnotationSession();
+        annotationsEdited();
+    }
+    return true;
+}
+
+void ReviewPage::startAnnotationSession()
+{
+    if (!m_annotationController || m_videoId.empty()) {
+        rebuildFrameIndex();
+        return;
+    }
+    try {
+        if (m_repository->containsVideo(m_videoId)) {
+            m_annotationController->open(m_videoId);
+        } else {
+            m_annotationController->begin(m_videoId, m_groundTruth);
+            // Ground truth is recorded so later edits have a baseline; media
+            // with nothing to record (a fresh video) stays out of the store.
+            if (!m_groundTruth.empty()) {
+                QString error;
+                if (!m_annotationController->save(&error))
+                    QMessageBox::warning(this, QStringLiteral("Observation storage failed"), error);
+            }
+        }
+    } catch (const std::exception& failure) {
+        // Never let a bad record escape a Qt slot: that terminates the app.
+        QMessageBox::warning(this, QStringLiteral("Could not open annotations"),
+                             QString::fromUtf8(failure.what()));
+        m_insightPanel->setEditingEnabled(false);
+        rebuildFrameIndex();
+        return;
+    }
+    m_insightPanel->setEditingEnabled(true);
+    rebuildFrameIndex();
+}
+
+void ReviewPage::rebuildFrameIndex()
+{
+    m_frameIndex.clear();
+    const auto& all = allObservations();
+    m_frameIndex.reserve(int(std::min<std::size_t>(all.size(), 1u << 20)));
+    for (int index = 0; index < int(all.size()); ++index)
+        m_frameIndex[int(all[std::size_t(index)].frameIndex)].push_back(index);
+}
+
+void ReviewPage::annotationsEdited()
+{
+    rebuildFrameIndex();
+    // Redraw the current frame so a deleted or relabelled box changes on
+    // screen immediately, then recompute everything derived from the set.
+    if (!m_currentImage.isNull())
+        displayFrame(m_currentImage, {}, m_currentFrame, m_sequenceFrames);
+    else
+        refreshFrameDetail();
+    rebuildAnalytics();
+    refreshHeader();
+    emit observationsChanged();
+}
+
+void ReviewPage::mergeTracks(qint64 endingTrack, qint64 startingTrack)
+{
+    if (!m_annotationController || !m_annotationController->hasSession()) {
+        QMessageBox::information(this, QStringLiteral("Merge tracks"),
+                                 QStringLiteral("Create or open a project before editing tracks."));
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("Merge tracks"),
+        QStringLiteral("Treat track %1 as a continuation of track %2? Every observation of "
+                       "track %1 will be relabelled as track %2.")
+            .arg(startingTrack)
+            .arg(endingTrack));
+    if (answer != QMessageBox::Yes)
+        return;
+    if (m_annotationController->mergeTracks(startingTrack, endingTrack))
+        annotationsEdited();
+}
+
+void ReviewPage::saveSnapshot()
+{
+    if (m_currentImage.isNull())
+        return;
+    const QString suggested = QStringLiteral("%1_frame%2.png")
+                                  .arg(QString::fromStdString(m_videoId))
+                                  .arg(m_currentFrame, 6, 10, QLatin1Char('0'));
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save frame snapshot"), suggestedPath(m_snapshotsFolder, suggested),
+        QStringLiteral("PNG images (*.png);;JPEG images (*.jpg)"));
+    if (path.isEmpty())
+        return;
+    // The canvas, not the raw frame, so boxes, IDs and trails are included.
+    if (!m_reviewPanel->sequenceView()->grab().save(path))
+        QMessageBox::warning(this, QStringLiteral("Snapshot failed"),
+                             QStringLiteral("Could not write %1").arg(path));
 }
 
 bool ReviewPage::setObservationStore(const QString& path, QString* error)
@@ -225,16 +622,16 @@ bool ReviewPage::setObservationStore(const QString& path, QString* error)
     m_repository = std::move(repository);
     m_annotationController =
         std::make_unique<aquatrack::application::AnnotationController>(*m_repository);
-    m_runtime->setObservationStore(path);
+    if (m_controller->isLoaded()) {
+        startAnnotationSession();
+        if (!m_currentImage.isNull())
+            displayFrame(m_currentImage, {}, m_currentFrame, m_sequenceFrames);
+        rebuildAnalytics();
+        refreshHeader();
+    }
+    refreshHistoryState();
+    emit observationsChanged();
     return true;
-}
-
-void ReviewPage::openSequence()
-{
-    const QString directory =
-        QFileDialog::getExistingDirectory(this, QStringLiteral("Open BrackishMOT sequence"));
-    if (!directory.isEmpty())
-        loadSequence(directory);
 }
 
 void ReviewPage::applyFilters()
@@ -252,11 +649,17 @@ void ReviewPage::applyFilters()
 
 qint64 ReviewPage::timestampFor(int frame) const
 {
+    const auto& source = m_controller->source();
+    if (source.isOpen())
+        return source.timestampMs(frame);
     return qint64(std::max(0, frame - 1)) * 1000 / m_frameRate;
 }
 
 int ReviewPage::frameForTimestamp(qint64 milliseconds) const
 {
+    const auto& source = m_controller->source();
+    if (source.isOpen())
+        return source.frameAtTimestamp(milliseconds);
     const int frame = int(std::max<qint64>(0, milliseconds) * m_frameRate / 1000) + 1;
     return std::clamp(frame, 1, std::max(1, m_sequenceFrames));
 }
@@ -264,13 +667,16 @@ int ReviewPage::frameForTimestamp(qint64 milliseconds) const
 QHash<int, QVector<QPointF>> ReviewPage::trailsFor(int frame) const
 {
     QHash<int, QVector<QPointF>> trails;
-    const auto all = observations();
-    const auto videoId = all.empty() ? std::string() : all.front().videoId;
-    for (const auto& observation : all) {
-        if (observation.frameIndex > frame || observation.frameIndex <= frame - kTrailLength)
+    const auto& all = allObservations();
+    for (int past = std::max(1, frame - kTrailLength + 1); past <= frame; ++past) {
+        const auto found = m_frameIndex.constFind(past);
+        if (found == m_frameIndex.constEnd())
             continue;
-        trails[int(observation.localTrackId)].push_back(
-            QPointF(observation.box.centerX(), observation.box.centerY()));
+        for (const int index : *found) {
+            const auto& observation = all[std::size_t(index)];
+            trails[int(observation.localTrackId)].push_back(
+                QPointF(observation.box.centerX(), observation.box.centerY()));
+        }
     }
     // Drop single-point trails; a dot is noise, not motion.
     for (auto it = trails.begin(); it != trails.end();)
@@ -282,31 +688,32 @@ void ReviewPage::displayFrame(const QImage& image, QVector<aquatrack::GroundTrut
                               int frame, int total)
 {
     m_currentFrame = frame;
+    m_currentImage = image;
     m_annotations = std::move(annotations);
 
     // With an annotation session open, the edited observations are the truth
     // on screen, not the on-disk ground truth the controller emitted.
-    if (m_annotationController) {
+    if (m_annotationController && m_annotationController->hasSession()) {
         m_annotations.clear();
-        for (const auto& observation : m_annotationController->observations()) {
-            if (observation.frameIndex != frame)
-                continue;
+        const auto& all = m_annotationController->observations();
+        for (const int index : m_frameIndex.value(frame)) {
+            const auto& observation = all[std::size_t(index)];
             aquatrack::GroundTruth annotation;
             annotation.frame = frame;
             annotation.trackId = int(observation.localTrackId);
             annotation.box = QRectF(observation.box.x1, observation.box.y1,
                                     observation.box.width(), observation.box.height());
             annotation.confidence = observation.confidence;
-            annotation.classId =
-                classIdForName(QString::fromStdString(observation.className));
+            annotation.classId = classIdForName(QString::fromStdString(observation.className));
             annotation.visibility = 1.0F;
             m_annotations.push_back(annotation);
         }
     }
 
-    m_reviewPanel->showFrame(image, m_annotations, frame, total, timestampFor(frame));
+    m_reviewPanel->showFrame(image, m_annotations, frame, total, timestampFor(frame),
+                             m_controller->source().frameSizeAt(frame));
     m_reviewPanel->sequenceView()->setTrails(trailsFor(frame));
-    m_runtime->setFrameInfo(frame, total, m_imageWidth, m_imageHeight);
+    m_surveyPanel->setCurrentFrame(frame);
     refreshFrameDetail();
 }
 
@@ -314,12 +721,12 @@ void ReviewPage::refreshFrameDetail()
 {
     const auto filters = m_surveyPanel->filters();
     m_currentObservations.clear();
-    if (m_annotationController) {
-        for (const auto& observation : m_annotationController->observations()) {
-            if (observation.frameIndex != m_currentFrame)
-                continue;
+    if (m_annotationController && m_annotationController->hasSession()) {
+        const auto& all = m_annotationController->observations();
+        for (const int index : m_frameIndex.value(m_currentFrame)) {
+            const auto& observation = all[std::size_t(index)];
             const int classId = classIdForName(QString::fromStdString(observation.className));
-            if (filters.speciesClassId != 0 && classId != filters.speciesClassId)
+            if (filters.speciesClassId >= 0 && classId != filters.speciesClassId)
                 continue;
             if (double(observation.confidence) < filters.minConfidence)
                 continue;
@@ -343,42 +750,76 @@ void ReviewPage::refreshHistoryState()
 
 void ReviewPage::buildFilmstrip()
 {
-    QVector<aquatrack::ui::Filmstrip::Thumbnail> thumbnails;
-    if (m_sequenceFrames <= 0 || m_sequenceDirectory.isEmpty()) {
-        m_reviewPanel->filmstrip()->clear();
+    const int generation = m_filmstripGeneration->fetch_add(1) + 1;
+    m_reviewPanel->filmstrip()->clear();
+    const media::MediaSource source = m_controller->source();
+    if (!source.isOpen())
         return;
-    }
-    aquatrack::BrackishMotSequence sequence;
-    if (!sequence.load(m_sequenceDirectory)) {
-        m_reviewPanel->filmstrip()->clear();
-        return;
-    }
-    const int step = std::max(1, m_sequenceFrames / kFilmstripFrames);
-    for (int frame = 1; frame <= m_sequenceFrames && thumbnails.size() < kFilmstripFrames;
-         frame += step) {
-        QImage image(sequence.imagePath(frame));
-        if (image.isNull())
-            continue;
-        aquatrack::ui::Filmstrip::Thumbnail thumbnail;
-        thumbnail.frame = frame;
-        // Scale on load; keeping eight full frames resident costs far more
-        // memory than the strip is worth.
-        thumbnail.image = image.scaledToWidth(190, Qt::SmoothTransformation);
-        const qint64 milliseconds = timestampFor(frame);
-        thumbnail.caption = QStringLiteral("%1:%2")
-                                .arg(milliseconds / 60000, 2, 10, QLatin1Char('0'))
-                                .arg((milliseconds / 1000) % 60, 2, 10, QLatin1Char('0'));
-        thumbnails.push_back(std::move(thumbnail));
-    }
-    m_reviewPanel->filmstrip()->setThumbnails(std::move(thumbnails));
+
+    QVector<int> frames;
+    const int step = std::max(1, source.frameCount() / kFilmstripFrames);
+    for (int frame = 1; frame <= source.frameCount() && frames.size() < kFilmstripFrames;
+         frame += step)
+        frames.push_back(frame);
+
+    // Thumbnails decode off the UI thread (for video each one is an FFmpeg
+    // seek) and appear as they arrive; a newer sequence cancels the batch.
+    QPointer<ReviewPage> guard(this);
+    auto current = m_filmstripGeneration;
+    m_thumbnailPool.clear();
+    m_thumbnailPool.start([guard, current, generation, source, frames] {
+        QVector<aquatrack::ui::Filmstrip::Thumbnail> thumbnails;
+        for (const int frame : frames) {
+            if (current->load() != generation)
+                return;
+            QImage image;
+            if (source.isVideo()) {
+                const auto& clip = source.clips().at(source.clipIndexForFrame(frame));
+                image = media::grabVideoFrame(clip.path, (frame - clip.firstFrame) / clip.frameRate,
+                                              kThumbnailWidth);
+            } else {
+                QImageReader reader(source.imagePath(frame));
+                const QSize full = reader.size();
+                if (full.isValid() && full.width() > kThumbnailWidth)
+                    reader.setScaledSize(QSize(kThumbnailWidth,
+                                               kThumbnailWidth * full.height() / full.width()));
+                image = reader.read();
+            }
+            if (image.isNull())
+                continue;
+            aquatrack::ui::Filmstrip::Thumbnail thumbnail;
+            thumbnail.frame = frame;
+            thumbnail.image = std::move(image);
+            const qint64 milliseconds = source.timestampMs(frame);
+            thumbnail.caption = media::formatDuration(milliseconds);
+            thumbnails.push_back(std::move(thumbnail));
+            if (!guard)
+                return;
+            QMetaObject::invokeMethod(
+                guard.data(),
+                [guard, current, generation, thumbnails] {
+                    if (guard && current->load() == generation)
+                        guard->m_reviewPanel->filmstrip()->setThumbnails(thumbnails);
+                },
+                Qt::QueuedConnection);
+        }
+    });
 }
 
 void ReviewPage::rebuildAnalytics()
 {
-    const auto all = observations();
+    const auto& all = allObservations();
     if (all.empty()) {
+        m_idSwitches.clear();
         m_reviewPanel->clearAnalytics();
+        m_reviewPanel->timeline()->setLanes({});
+        m_reviewPanel->timeline()->setMarkers({});
+        m_reviewPanel->timeline()->setLinks({});
+        m_insightPanel->setEvents({});
+        m_insightPanel->setConfidenceSeries({}, 0.0);
         m_insightPanel->setIdSwitch(std::nullopt, 0);
+        m_surveyPanel->setSpecies({});
+        m_surveyPanel->setTotals({});
         return;
     }
 
@@ -397,35 +838,70 @@ void ReviewPage::rebuildAnalytics()
     m_reviewPanel->setTracksTable(spans);
     m_reviewPanel->setEventsTable(events);
 
-    // ---- Sequence timeline -------------------------------------------
-    // Where each track enters and leaves.
-    QVector<aquatrack::ui::EventTimeline::Tick> ticks;
-    ticks.reserve(int(spans.size()) * 2);
-    for (const auto& span : spans) {
-        ticks.push_back({int(span.firstFrame), int(span.trackId), true});
-        ticks.push_back({int(span.lastFrame), int(span.trackId), false});
+    // ---- Track lanes -------------------------------------------------
+    // One lane per track: the runs of consecutive frames it was observed
+    // in. A break between runs is a frame where the tracker lost it.
+    std::map<domain::LocalTrackId, std::vector<std::int64_t>> framesByTrack;
+    for (const auto& observation : all)
+        framesByTrack[observation.localTrackId].push_back(observation.frameIndex);
+    std::map<domain::LocalTrackId, std::string> speciesByTrack;
+    for (const auto& span : spans)
+        speciesByTrack[span.trackId] = span.className;
+    QVector<aquatrack::ui::TrackLanes::Lane> lanes;
+    lanes.reserve(int(framesByTrack.size()));
+    for (auto& [trackId, frames] : framesByTrack) {
+        aquatrack::ui::TrackLanes::Lane lane;
+        lane.trackId = int(trackId);
+        lane.species = QString::fromStdString(speciesByTrack[trackId]);
+        lane.color = aquatrack::ui::trackColor(int(trackId));
+        lane.observations = int(frames.size());
+        std::sort(frames.begin(), frames.end());
+        frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+        for (std::size_t index = 0; index < frames.size(); ++index) {
+            const int frame = int(frames[index]);
+            if (lane.segments.isEmpty() || frame != lane.segments.last().second + 1)
+                lane.segments.push_back({frame, frame});
+            else
+                lane.segments.last().second = frame;
+        }
+        lanes.push_back(std::move(lane));
     }
-    m_reviewPanel->timeline()->setTicks(std::move(ticks));
+    m_reviewPanel->timeline()->setLanes(std::move(lanes));
+
+    // Likely identity switches, linked from the track that ends to the one
+    // that starts.
+    std::map<domain::LocalTrackId, const analytics::TrackSpan*> spanByTrack;
+    for (const auto& span : spans)
+        spanByTrack[span.trackId] = &span;
+    QVector<aquatrack::ui::TrackLanes::Link> links;
+    for (const auto& candidate : m_idSwitches) {
+        const auto ending = spanByTrack.find(candidate.endingTrack);
+        const auto starting = spanByTrack.find(candidate.startingTrack);
+        if (ending == spanByTrack.end() || starting == spanByTrack.end())
+            continue;
+        links.push_back({int(candidate.endingTrack), int(candidate.startingTrack),
+                         int(ending->second->lastFrame), int(starting->second->firstFrame)});
+    }
+    m_reviewPanel->timeline()->setLinks(std::move(links));
 
     // Derived events, as pins for moments and bands for intervals. Events
     // with no position in time (totals such as "N very short tracks") are
     // summarised in the right rail instead of being pinned at zero.
-    QVector<aquatrack::ui::EventTimeline::Marker> markers;
+    QVector<aquatrack::ui::TrackLanes::Marker> markers;
     for (const auto& event : events) {
         if (event.atMs == 0 && event.untilMs == 0)
             continue;
-        aquatrack::ui::EventTimeline::Marker marker;
+        aquatrack::ui::TrackLanes::Marker marker;
         marker.startFrame = frameForTimestamp(event.atMs);
         marker.endFrame = frameForTimestamp(std::max(event.atMs, event.untilMs));
-        marker.color = event.severity == analytics::EventSeverity::Alert    ? QColor(0xff, 0x6b, 0x6b)
-                       : event.severity == analytics::EventSeverity::Warning ? QColor(0xf5, 0xa6, 0x23)
-                                                                            : QColor(0x2e, 0x9b, 0xf0);
+        marker.color = event.severity == analytics::EventSeverity::Alert     ? aquatrack::ui::palette::Danger
+                       : event.severity == analytics::EventSeverity::Warning ? aquatrack::ui::palette::Warning
+                                                                             : aquatrack::ui::palette::Accent;
         marker.label = QString::fromStdString(event.description);
         markers.push_back(std::move(marker));
     }
     m_reviewPanel->timeline()->setMarkers(std::move(markers));
 
-    m_insightPanel->setSummary(summary, peak);
     m_insightPanel->setEvents(events);
     m_insightPanel->setIdSwitch(m_idSwitches.empty()
                                     ? std::optional<analytics::IdSwitchCandidate>{}
@@ -461,6 +937,160 @@ void ReviewPage::rebuildAnalytics()
             species.push_back({classId, label});
     }
     m_surveyPanel->setSpecies(species);
-    m_surveyPanel->setCounts(int(summary.totalObservations), int(summary.uniqueLocalTracks),
-                             int(summary.observationsByClass.size()), int(events.size()));
+    SurveyPanel::Totals totals;
+    totals.annotations = int(summary.totalObservations);
+    totals.tracks = int(summary.uniqueLocalTracks);
+    totals.peakInFrame = int(peak);
+    totals.species = int(summary.observationsByClass.size());
+    totals.events = int(events.size());
+    std::size_t mostObserved = 0;
+    for (const auto& [name, count] : summary.observationsByClass)
+        if (count > mostObserved) {
+            mostObserved = count;
+            totals.dominantSpecies = QString::fromStdString(name);
+        }
+    m_surveyPanel->setTotals(totals);
+}
+
+// ---- Import and detection ---------------------------------------------
+
+void ReviewPage::chooseAnnotationFile()
+{
+    if (!m_controller->isLoaded())
+        return;
+    if (!m_annotationController) {
+        QMessageBox::information(this, QStringLiteral("Import annotations"),
+                                 QStringLiteral("Create or open a project first: imported "
+                                                "annotations are saved in it."));
+        return;
+    }
+    const QString start = m_annotationsFolder.isEmpty()
+                              ? QFileInfo(m_controller->source().path()).absolutePath()
+                              : m_annotationsFolder;
+    const QString file = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Import annotations for %1").arg(m_controller->source().name()), start,
+        aquatrack::application::AnnotationImporter::fileDialogFilter());
+    if (!file.isEmpty())
+        importAnnotations(file);
+}
+
+bool ReviewPage::importAnnotations(const QString& file)
+{
+    const auto& source = m_controller->source();
+    aquatrack::application::AnnotationImport imported;
+    QString error;
+    if (!aquatrack::application::AnnotationImporter::read(file, source, imported, &error)) {
+        QMessageBox::warning(this, QStringLiteral("Could not import annotations"), error);
+        return false;
+    }
+    const QLocale locale = QLocale::system();
+    QString what = QStringLiteral("%1 boxes in %2 tracks from %3 (%4)")
+                       .arg(locale.toString(qlonglong(imported.observations.size())),
+                            locale.toString(imported.tracks), QFileInfo(file).fileName(),
+                            imported.format);
+    const std::size_t count = imported.observations.size();
+    if (!replaceObservations(source, std::move(imported.observations), what))
+        return false;
+    QString note;
+    if (imported.outOfRange > 0)
+        note += QStringLiteral(" %1 rows were for frames past the end of the media and were left out.")
+                    .arg(locale.toString(imported.outOfRange));
+    if (imported.skipped > 0)
+        note += QStringLiteral(" %1 rows had no usable box.").arg(locale.toString(imported.skipped));
+    if (!note.isEmpty())
+        QMessageBox::information(this, QStringLiteral("Annotations imported"),
+                                 QStringLiteral("Imported %1 boxes.%2")
+                                     .arg(locale.toString(qlonglong(count)), note));
+    return true;
+}
+
+bool ReviewPage::replaceObservations(const media::MediaSource& media,
+                                     std::vector<domain::Observation> observations,
+                                     const QString& what)
+{
+    if (!m_repository || !m_annotationController)
+        return false;
+    const std::string videoId = media.name().toStdString();
+    const bool onScreen = videoId == m_videoId && m_controller->isLoaded();
+    if (onScreen && !maybeSaveAnnotations())
+        return false;
+
+    const std::size_t existing = onScreen ? allObservations().size()
+                                          : m_repository->observationsForVideo(videoId).size();
+    if (existing > 0) {
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("Replace annotations?"),
+            QStringLiteral("%1 already has %2 annotations. Replace them with %3?\n\n"
+                           "The current annotations cannot be recovered afterwards; export them "
+                           "first if you may need them.")
+                .arg(media.name(), QLocale::system().toString(qlonglong(existing)), what),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (answer != QMessageBox::Yes)
+            return false;
+    }
+    std::string message;
+    if (!m_repository->replaceObservationsForVideo(videoId, observations, message)) {
+        QMessageBox::warning(this, QStringLiteral("Could not save annotations"),
+                             QString::fromStdString(message));
+        return false;
+    }
+    if (onScreen) {
+        startAnnotationSession();
+        annotationsEdited();
+        refreshHistoryState();
+    } else {
+        emit observationsChanged();
+    }
+    return true;
+}
+
+void ReviewPage::startAnalysis(aquatrack::application::AnalysisRequest request)
+{
+    if (m_analysis->isRunning() || !m_controller->isLoaded())
+        return;
+    m_analysisMedia = m_controller->source();
+    request.source = m_analysisMedia.path();
+    if (request.output.isEmpty()) {
+        const QString folder = m_annotationsFolder.isEmpty() ? QDir::tempPath() : m_annotationsFolder;
+        QDir().mkpath(folder);
+        request.output = QDir(folder).filePath(
+            QStringLiteral("%1.detections.json").arg(m_analysisMedia.name()));
+    }
+    m_reviewPanel->setAnalysisRunning(true);
+    m_analysis->start(request);
+}
+
+bool ReviewPage::isAnalysisRunning() const
+{
+    return m_analysis->isRunning();
+}
+
+void ReviewPage::cancelAnalysis()
+{
+    m_analysis->cancel();
+}
+
+void ReviewPage::analysisFinished(const QString& resultsPath)
+{
+    m_reviewPanel->setAnalysisRunning(false);
+    aquatrack::application::AnalysisResult result;
+    QString error;
+    if (!aquatrack::application::AnalysisRunner::readResults(resultsPath, m_analysisMedia, result,
+                                                             &error)) {
+        QMessageBox::warning(this, QStringLiteral("Could not load detections"), error);
+        return;
+    }
+    const QLocale locale = QLocale::system();
+    const QString what = QStringLiteral("%1 detections in %2 tracks from %3")
+                             .arg(locale.toString(qlonglong(result.observations.size())),
+                                  locale.toString(result.tracks), result.modelName);
+    if (result.observations.empty()) {
+        QMessageBox::information(
+            this, QStringLiteral("No fish detected"),
+            QStringLiteral("%1 found nothing above the confidence threshold in %2. Try a lower "
+                           "Detection confidence in Settings, or a model trained on similar footage.")
+                .arg(result.modelName, m_analysisMedia.name()));
+        return;
+    }
+    replaceObservations(m_analysisMedia, std::move(result.observations), what);
 }

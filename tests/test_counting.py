@@ -26,3 +26,11 @@ def test_direction_filter() -> None:
     counter.update([track])
     assert counter.total == 0
 
+
+
+def test_forgets_tracks_not_seen_for_a_while() -> None:
+    counter = LineCounter(line_y=50, forget_after=2)
+    counter.update([make_track(40)])
+    for _ in range(3):
+        counter.update([])
+    assert counter._previous_y == {}

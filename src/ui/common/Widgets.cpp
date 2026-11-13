@@ -139,7 +139,7 @@ void ToggleSwitch::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing);
     const QRectF track(0, 0, width(), height());
     painter.setPen(Qt::NoPen);
-    painter.setBrush(m_checked ? palette::Accent : QColor(0x1e, 0x3a, 0x55));
+    painter.setBrush(m_checked ? palette::Accent : palette::Line);
     painter.drawRoundedRect(track, height() / 2.0, height() / 2.0);
 
     const qreal diameter = height() - 5;

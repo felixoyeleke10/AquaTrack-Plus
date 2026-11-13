@@ -23,12 +23,30 @@ QString stableId(const QString& path)
         QCryptographicHash::hash(normalized, QCryptographicHash::Sha256).toHex().left(16));
 }
 
-qint64 countFiles(const QString& directory, const QStringList& filters)
+// Synthetic datasets announce themselves by name: BrackishMOT's simulated
+// release ships as brackishMOTSynth, brackishMOTSynth_B, ... A folder on the
+// way to the dataset, or the dataset itself, carrying "synth" marks it.
+bool looksSynthetic(const QString& path, const QString& name)
+{
+    if (name.contains(QLatin1String("synth"), Qt::CaseInsensitive))
+        return true;
+    const auto segments = QDir::fromNativeSeparators(path).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    return std::any_of(segments.cbegin(), segments.cend(), [](const QString& segment) {
+        return segment.contains(QLatin1String("synth"), Qt::CaseInsensitive);
+    });
+}
+
+// Counts matching files; `first` receives the alphabetically first one,
+// which for numbered frames is frame 1.
+qint64 countFiles(const QString& directory, const QStringList& filters, QString* first = nullptr)
 {
     const QDir dir(directory);
     if (!dir.exists())
         return 0;
-    return dir.entryList(filters, QDir::Files | QDir::NoDotAndDotDot).size();
+    const auto names = dir.entryList(filters, QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
+    if (first && !names.isEmpty())
+        *first = dir.filePath(names.first());
+    return names.size();
 }
 
 qint64 countLines(const QString& path)
@@ -174,8 +192,9 @@ CatalogScanResult DatasetCatalog::scan(const QString& rootPath) const
         descriptor.frameCount = frames;
         descriptor.hasAnnotations = true;
         descriptor.manifestPath = infoPath;
-        descriptor.imageCount =
-            countFiles(QDir(sequencePath).filePath(imageDirectory), kImageFilters);
+        descriptor.synthetic = looksSynthetic(sequencePath, name);
+        descriptor.imageCount = countFiles(QDir(sequencePath).filePath(imageDirectory),
+                                           kImageFilters, &descriptor.previewImage);
         descriptor.mediaPresent = descriptor.imageCount > 0;
         descriptor.annotationCount = countLines(groundTruth);
 
@@ -215,6 +234,7 @@ CatalogScanResult DatasetCatalog::scan(const QString& rootPath) const
             descriptor.format = DatasetFormat::YoloDetection;
             descriptor.manifestPath = path;
             descriptor.classNames = manifest.classNames;
+            descriptor.synthetic = looksSynthetic(directory, descriptor.name);
 
             for (const auto& splitName :
                  {QStringLiteral("train"), QStringLiteral("val"), QStringLiteral("test")}) {
@@ -224,7 +244,10 @@ CatalogScanResult DatasetCatalog::scan(const QString& rootPath) const
                 DatasetSplit split;
                 split.name = splitName;
                 split.imagePath = QDir::cleanPath(base.filePath(declared));
-                split.imageCount = countFiles(split.imagePath, kImageFilters);
+                QString first;
+                split.imageCount = countFiles(split.imagePath, kImageFilters, &first);
+                if (descriptor.previewImage.isEmpty())
+                    descriptor.previewImage = first;
                 // Ultralytics layouts mirror images/ into labels/.
                 QString labelPath = split.imagePath;
                 labelPath.replace(QStringLiteral("/images"), QStringLiteral("/labels"));

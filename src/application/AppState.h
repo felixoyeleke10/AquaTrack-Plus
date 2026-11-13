@@ -15,7 +15,8 @@ public:
     Analytics = 3,
     Datasets = 4,
     Models = 5,
-    Settings = 6
+    Settings = 6,
+    Export = 7
   };
   Q_ENUM(Page)
 

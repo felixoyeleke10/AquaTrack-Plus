@@ -36,6 +36,12 @@ int main() {
   requireTest(emptyReopened.containsVideo("video-1") &&
                   emptyReopened.observationsForVideo("video-1").empty(),
               "distinguish saved empty video from absent video");
+  requireTest(emptyReopened.removeVideo("video-1", error) &&
+                  !emptyReopened.containsVideo("video-1"),
+              "removing a video forgets that it was reviewed");
+  aquatrack::data::JsonObservationRepository removedReopened(path);
+  requireTest(removedReopened.open(error) && !removedReopened.containsVideo("video-1"),
+              "video removal is persisted");
   observation.confidence = 2.0F;
   requireTest(!reopened.saveObservations({&observation, 1}, error),
               "reject invalid observation");

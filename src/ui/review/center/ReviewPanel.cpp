@@ -10,7 +10,10 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLocale>
+#include <QProgressBar>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
@@ -66,11 +69,18 @@ QFrame* chartCard(const QString& title, QWidget* body, QWidget* parent, QLabel**
     return frame;
 }
 
-QTableWidget* buildTable(const QStringList& headers, QWidget* parent)
+// Text columns read from the left, figures line up on the right; headers
+// follow their column. `numeric` lists the right-aligned columns.
+QTableWidget* buildTable(const QStringList& headers, const QList<int>& numeric, QWidget* parent)
 {
     auto* table = new QTableWidget(0, headers.size(), parent);
     table->setHorizontalHeaderLabels(headers);
+    for (int column = 0; column < headers.size(); ++column)
+        table->horizontalHeaderItem(column)->setTextAlignment(
+            (numeric.contains(column) ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter);
     table->verticalHeader()->setVisible(false);
+    table->verticalHeader()->setDefaultSectionSize(30);
+    table->setCursor(Qt::PointingHandCursor);
     table->setShowGrid(false);
     table->setAlternatingRowColors(true);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -78,7 +88,22 @@ QTableWidget* buildTable(const QStringList& headers, QWidget* parent)
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     table->horizontalHeader()->setHighlightSections(false);
+    table->setWordWrap(false);
     return table;
+}
+
+QTableWidgetItem* textCell(const QString& text)
+{
+    auto* item = new QTableWidgetItem(text);
+    item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    return item;
+}
+
+QTableWidgetItem* numberCell(const QString& text)
+{
+    auto* item = new QTableWidgetItem(text);
+    item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    return item;
 }
 
 }  // namespace
@@ -104,6 +129,7 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     auto* canvasBody = new QVBoxLayout(canvasCard);
     canvasBody->setContentsMargins(1, 1, 1, 1);
     canvasBody->setSpacing(0);
+    canvasBody->addWidget(buildHeader());
     m_view = new SequenceView(canvasCard);
     canvasBody->addWidget(m_view, 1);
     canvasBody->addWidget(buildTransport());
@@ -121,10 +147,10 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     timelineBody->setContentsMargins(12, 6, 12, 8);
     timelineBody->setSpacing(4);
 
-    // No heading: the strip is self-evident next to the transport, and the
-    // row it needed cost more than it explained.
-    m_timeline = new EventTimeline(timelineCard);
-    connect(m_timeline, &EventTimeline::frameRequested, this, &ReviewPanel::frameRequested);
+    // Track lanes: one bar per track, gaps where it was lost, links for
+    // likely identity switches. Self-explanatory next to the transport.
+    m_timeline = new TrackLanes(timelineCard);
+    connect(m_timeline, &TrackLanes::frameRequested, this, &ReviewPanel::frameRequested);
     timelineBody->addWidget(m_timeline);
 
     m_filmstrip = new Filmstrip(timelineCard);
@@ -140,21 +166,184 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     m_tabs->setDocumentMode(true);
     m_trackTable = buildTable({QStringLiteral("Track"), QStringLiteral("Species"),
                                QStringLiteral("First"), QStringLiteral("Last"),
-                               QStringLiteral("Frames"), QStringLiteral("Duration")},
-                              m_tabs);
-    m_eventTable = buildTable({QStringLiteral("Time"), QStringLiteral("Event")}, m_tabs);
-    m_tabs->addTab(m_trackTable, QStringLiteral("TRACKS"));
-    m_tabs->addTab(m_eventTable, QStringLiteral("EVENTS"));
+                               QStringLiteral("Detections"), QStringLiteral("Duration")},
+                              {2, 3, 4, 5}, m_tabs);
+    m_trackTable->setObjectName(QStringLiteral("trackTable"));
+    m_trackTable->horizontalHeaderItem(2)->setToolTip(QStringLiteral("First frame the track is seen"));
+    m_trackTable->horizontalHeaderItem(3)->setToolTip(QStringLiteral("Last frame the track is seen"));
+    m_trackTable->horizontalHeaderItem(4)->setToolTip(QStringLiteral("Boxes recorded for the track"));
+    // Every column fits its heading and values, so none is ever cut short;
+    // the last takes any spare width (its figures stay right-aligned).
+    for (int column = 0; column < 5; ++column)
+        m_trackTable->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+    m_trackTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+    m_trackTable->setToolTip(QStringLiteral("Click a track to go to its first frame"));
+    connect(m_trackTable, &QTableWidget::cellClicked, this, [this](int row, int) {
+        if (auto* item = m_trackTable->item(row, 2))
+            emit frameRequested(item->data(Qt::UserRole).toInt());
+    });
+    m_eventTable = buildTable({QStringLiteral("Time"), QStringLiteral("Event")}, {}, m_tabs);
+    m_eventTable->setObjectName(QStringLiteral("eventTable"));
+    m_eventTable->setToolTip(QStringLiteral("Click an event to go to it"));
+    m_eventTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    connect(m_eventTable, &QTableWidget::cellClicked, this, [this](int row, int) {
+        if (auto* item = m_eventTable->item(row, 0))
+            emit timestampRequested(item->data(Qt::UserRole).toLongLong());
+    });
+    m_tabs->addTab(m_trackTable, QStringLiteral("Tracks"));
+    m_tabs->addTab(m_eventTable, QStringLiteral("Events"));
+    // The summary charts: useful, but not while scrubbing, so they wait in
+    // a tab instead of squeezing the tables.
+    m_tabs->addTab(buildAnalyticsRow(m_tabs), QStringLiteral("Charts"));
     tabBody->addWidget(m_tabs);
-    tabCard->setMinimumHeight(120);
+    tabCard->setMinimumHeight(190);
     lowerColumn->addWidget(tabCard, 1);
 
-    // ---- Analytics ---------------------------------------------------
-    lowerColumn->addWidget(buildAnalyticsRow(lower));
-
     split->addWidget(lower);
-    split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 2);
+    // The frame is what a reviewer looks at: give it the space, and the
+    // charts below their minimum; the handle lets them have more.
+    split->setStretchFactor(0, 4);
+    split->setStretchFactor(1, 1);
+    split->setSizes({1000, 1});
+}
+
+QWidget* ReviewPanel::buildHeader()
+{
+    auto* header = new QWidget(this);
+    header->setObjectName(QStringLiteral("reviewHeader"));
+    header->setAttribute(Qt::WA_StyledBackground, true);
+    header->setStyleSheet(QStringLiteral("#reviewHeader{background:%1;border-bottom:1px solid %2}")
+                              .arg(palette::Chrome.name(), palette::Line.name()));
+    auto* column = new QVBoxLayout(header);
+    column->setContentsMargins(12, 7, 10, 7);
+    column->setSpacing(6);
+
+    auto* row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(8);
+    auto* titles = new QVBoxLayout;
+    titles->setContentsMargins(0, 0, 0, 0);
+    titles->setSpacing(0);
+    m_title = typedLabel(QStringLiteral("Nothing open"), "small", header);
+    m_title->setObjectName(QStringLiteral("reviewTitle"));
+    m_title->setStyleSheet(QStringLiteral("font-weight:600;color:%1").arg(palette::TextPrimary.name()));
+    m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // The title and detail give way before the buttons do.
+    m_title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    titles->addWidget(m_title);
+    m_detail = typedLabel(QStringLiteral("Open a sequence or video from the Video library"), "dim",
+                          header);
+    m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    titles->addWidget(m_detail);
+    row->addLayout(titles, 1);
+
+    m_source = typedLabel(QString(), "small", header);
+    m_source->setObjectName(QStringLiteral("annotationSource"));
+    m_source->hide();
+    row->addWidget(m_source, 0, Qt::AlignVCenter);
+
+    m_import = textButton(QStringLiteral("Import annotations"), header);
+    m_import->setObjectName(QStringLiteral("importAnnotations"));
+    m_import->setIcon(glyphIcon(Glyph::Annotations, 15, palette::TextSecondary, palette::TextPrimary));
+    m_import->setToolTip(QStringLiteral(
+        "Load ground-truth tracks for this media from a MOTChallenge gt.txt or a COCO-style "
+        "tracking JSON (for example SFISHTRACK annotations)"));
+    connect(m_import, &QPushButton::clicked, this, &ReviewPanel::importAnnotationsRequested);
+    row->addWidget(m_import, 0, Qt::AlignVCenter);
+
+    m_analyze = textButton(QStringLiteral("Detect && track"), header, "primary");
+    m_analyze->setObjectName(QStringLiteral("analyzeMedia"));
+    m_analyze->setIcon(glyphIcon(Glyph::Sparkle, 15, Qt::white, Qt::white));
+    m_analyze->setToolTip(QStringLiteral(
+        "Run the active detector and tracker over every frame and load the tracks for review"));
+    connect(m_analyze, &QPushButton::clicked, this, &ReviewPanel::analyzeRequested);
+    row->addWidget(m_analyze, 0, Qt::AlignVCenter);
+    column->addLayout(row);
+
+    m_progressRow = new QWidget(header);
+    auto* progressLayout = new QHBoxLayout(m_progressRow);
+    progressLayout->setContentsMargins(0, 0, 0, 0);
+    progressLayout->setSpacing(8);
+    m_progress = new QProgressBar(m_progressRow);
+    m_progress->setObjectName(QStringLiteral("analysisProgress"));
+    m_progress->setTextVisible(false);
+    m_progress->setFixedHeight(6);
+    progressLayout->addWidget(m_progress, 1);
+    m_progressText = typedLabel(QString(), "dim", m_progressRow);
+    m_progressText->setMinimumWidth(240);
+    progressLayout->addWidget(m_progressText);
+    auto* cancel = textButton(QStringLiteral("Cancel"), m_progressRow);
+    cancel->setObjectName(QStringLiteral("cancelAnalysis"));
+    connect(cancel, &QPushButton::clicked, this, &ReviewPanel::analysisCancelRequested);
+    progressLayout->addWidget(cancel);
+    m_progressRow->hide();
+    column->addWidget(m_progressRow);
+
+    setMediaActionsEnabled(false);
+    return header;
+}
+
+void ReviewPanel::setMediaTitle(const QString& title, const QString& detail)
+{
+    m_title->setText(title);
+    m_detail->setText(detail);
+}
+
+void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent)
+{
+    m_sourceText = text;
+    m_source->setToolTip(text);
+    m_source->setVisible(!text.isEmpty() && !m_compactHeader);
+    m_source->setText(text);
+    m_source->setStyleSheet(
+        QStringLiteral("padding:3px 9px;border-radius:9px;font-weight:600;color:%1;"
+                       "background:rgba(%2,%3,%4,38);border:1px solid rgba(%2,%3,%4,110)")
+            .arg(accent.name())
+            .arg(accent.red())
+            .arg(accent.green())
+            .arg(accent.blue()));
+}
+
+void ReviewPanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    setCompactHeader(width() < 820);
+}
+
+void ReviewPanel::setCompactHeader(bool compact)
+{
+    if (compact == m_compactHeader)
+        return;
+    m_compactHeader = compact;
+    m_import->setText(compact ? QString() : QStringLiteral("Import annotations"));
+    m_analyze->setText(compact ? QStringLiteral("Detect") : QStringLiteral("Detect && track"));
+    m_source->setVisible(!m_sourceText.isEmpty() && !compact);
+}
+
+void ReviewPanel::setMediaActionsEnabled(bool enabled)
+{
+    m_import->setEnabled(enabled && !m_analysisRunning);
+    m_analyze->setEnabled(enabled && !m_analysisRunning);
+}
+
+void ReviewPanel::setAnalysisRunning(bool running)
+{
+    m_analysisRunning = running;
+    m_progressRow->setVisible(running);
+    setMediaActionsEnabled(m_totalFrames > 0);
+    if (running)
+        setAnalysisProgress(0, 0, QStringLiteral("Starting the detector..."));
+}
+
+void ReviewPanel::setAnalysisProgress(int done, int total, const QString& text)
+{
+    if (total > 0) {
+        m_progress->setRange(0, total);
+        m_progress->setValue(std::clamp(done, 0, total));
+    } else {
+        m_progress->setRange(0, 0);  // busy indicator
+    }
+    m_progressText->setText(text);
 }
 
 QWidget* ReviewPanel::buildTransport()
@@ -167,7 +356,7 @@ QWidget* ReviewPanel::buildTransport()
     row->setContentsMargins(12, 0, 12, 0);
     row->setSpacing(6);
 
-    auto* back = iconButton(Glyph::Undo, QStringLiteral("Previous frame"), bar);
+    auto* back = iconButton(Glyph::Previous, QStringLiteral("Previous frame"), bar);
     connect(back, &QPushButton::clicked, this, [this] { emit stepRequested(-1); });
     row->addWidget(back);
 
@@ -190,8 +379,12 @@ QWidget* ReviewPanel::buildTransport()
     connect(m_frameSlider, &QSlider::valueChanged, this, &ReviewPanel::frameRequested);
     row->addWidget(m_frameSlider, 1);
 
-    row->addWidget(iconButton(Glyph::Camera, QStringLiteral("Snapshot (not yet wired)"), bar));
-    row->addWidget(iconButton(Glyph::Fullscreen, QStringLiteral("Fullscreen (not yet wired)"), bar));
+    auto* snapshot = iconButton(Glyph::Camera, QStringLiteral("Save a snapshot of this frame"), bar);
+    connect(snapshot, &QPushButton::clicked, this, &ReviewPanel::snapshotRequested);
+    row->addWidget(snapshot);
+    auto* fullscreen = iconButton(Glyph::Fullscreen, QStringLiteral("Toggle full screen"), bar);
+    connect(fullscreen, &QPushButton::clicked, this, &ReviewPanel::fullscreenRequested);
+    row->addWidget(fullscreen);
     return bar;
 }
 
@@ -222,25 +415,33 @@ QWidget* ReviewPanel::buildAnalyticsRow(QWidget* parent)
 
     for (int index = 0; index < 4; ++index)
         grid->setColumnStretch(index, 1);
-    row->setFixedHeight(146);
+    grid->setContentsMargins(2, 10, 2, 2);
+    row->setProperty("role", "bare");
+    row->setMinimumHeight(150);
     return row;
 }
 
-void ReviewPanel::configureSequence(int frames, int frameRate)
+void ReviewPanel::configureSequence(int frames, int frameRate, qint64 durationMs)
 {
     m_totalFrames = frames;
     m_frameRate = std::max(1, frameRate);
-    m_play->setEnabled(true);
-    m_frameSlider->setEnabled(true);
+    m_durationMs = durationMs >= 0 ? durationMs : qint64(frames) * 1000 / m_frameRate;
+    setMediaActionsEnabled(frames > 0);
+    m_play->setEnabled(frames > 0);
+    m_frameSlider->setEnabled(frames > 0);
+    if (frames <= 0) {
+        m_clock->setText(QStringLiteral("00:00:00 / 00:00:00"));
+        setPlaying(false);
+    }
     const QSignalBlocker blocker(m_frameSlider);
     m_frameSlider->setRange(1, std::max(1, frames));
     m_timeline->setSequenceLength(frames, m_frameRate);
 }
 
 void ReviewPanel::showFrame(const QImage& image, const QVector<aquatrack::GroundTruth>& annotations,
-                            int frame, int total, qint64 timeMs)
+                            int frame, int total, qint64 timeMs, QSize sourceSize)
 {
-    m_view->setFrame(image, annotations);
+    m_view->setFrame(image, annotations, sourceSize);
     m_view->setFrameInfo(frame, total, timeMs);
     {
         const QSignalBlocker blocker(m_frameSlider);
@@ -249,7 +450,8 @@ void ReviewPanel::showFrame(const QImage& image, const QVector<aquatrack::Ground
     m_timeline->setCurrentFrame(frame);
     m_filmstrip->setCurrentFrame(frame);
     m_clock->setText(QStringLiteral("%1 / %2").arg(
-        clock(timeMs), clock(qint64(total) * 1000 / m_frameRate)));
+        clock(timeMs),
+        clock(m_durationMs > 0 ? m_durationMs : qint64(total) * 1000 / m_frameRate)));
 }
 
 void ReviewPanel::setPlaying(bool playing)
@@ -271,7 +473,7 @@ void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,
     tracks.filled = true;
     ChartSeries observations;
     observations.name = QStringLiteral("Observations");
-    observations.color = QColor(0xa7, 0x8b, 0xfa);
+    observations.color = palette::Secondary;
     for (const auto& bin : bins) {
         tracks.values.push_back(double(bin.uniqueTracks));
         observations.values.push_back(double(bin.observations));
@@ -299,10 +501,10 @@ void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,
     }
     std::sort(slices.begin(), slices.end(),
               [](const DonutSlice& left, const DonutSlice& right) { return left.value > right.value; });
-    // Colour by rank so the largest slice is always the first palette entry
-    // and the legend reads top-down in the same order as the ring.
+    // Colour by species, not rank, so a slice matches the box colour and the
+    // "Species in frame" legend on the canvas.
     for (int index = 0; index < slices.size(); ++index)
-        slices[index].color = speciesColor((index % 6) + 1);
+        slices[index].color = speciesColorForName(slices[index].name, index);
     m_speciesChart->setSlices(slices);
     m_speciesChart->setCenterCaption(QString::number(summary.totalObservations),
                                      QStringLiteral("total"));
@@ -324,20 +526,22 @@ void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,
 
 void ReviewPanel::setTracksTable(const std::vector<analytics::TrackSpan>& spans)
 {
+    const QLocale locale = QLocale::system();
     m_trackTable->setRowCount(int(spans.size()));
     for (int row = 0; row < int(spans.size()); ++row) {
         const auto& span = spans.at(std::size_t(row));
-        auto* badge = new QTableWidgetItem(QStringLiteral("ID %1").arg(span.trackId));
+        auto* badge = textCell(QStringLiteral("ID %1").arg(span.trackId));
         badge->setForeground(trackColor(int(span.trackId)));
         m_trackTable->setItem(row, 0, badge);
-        m_trackTable->setItem(row, 1,
-                              new QTableWidgetItem(QString::fromStdString(span.className)));
-        m_trackTable->setItem(row, 2, new QTableWidgetItem(QString::number(span.firstFrame)));
-        m_trackTable->setItem(row, 3, new QTableWidgetItem(QString::number(span.lastFrame)));
-        m_trackTable->setItem(row, 4, new QTableWidgetItem(QString::number(span.observations)));
-        m_trackTable->setItem(row, 5, new QTableWidgetItem(shortClock(span.durationMs())));
+        m_trackTable->setItem(row, 1, textCell(QString::fromStdString(span.className)));
+        auto* first = numberCell(locale.toString(qlonglong(span.firstFrame)));
+        first->setData(Qt::UserRole, int(span.firstFrame));
+        m_trackTable->setItem(row, 2, first);
+        m_trackTable->setItem(row, 3, numberCell(locale.toString(qlonglong(span.lastFrame))));
+        m_trackTable->setItem(row, 4, numberCell(locale.toString(qulonglong(span.observations))));
+        m_trackTable->setItem(row, 5, numberCell(shortClock(span.durationMs())));
     }
-    m_tabs->setTabText(0, QStringLiteral("TRACKS (%1)").arg(spans.size()));
+    m_tabs->setTabText(0, QStringLiteral("Tracks (%1)").arg(locale.toString(qulonglong(spans.size()))));
 }
 
 void ReviewPanel::setEventsTable(const std::vector<analytics::SurveyEvent>& events)
@@ -345,8 +549,11 @@ void ReviewPanel::setEventsTable(const std::vector<analytics::SurveyEvent>& even
     m_eventTable->setRowCount(int(events.size()));
     for (int row = 0; row < int(events.size()); ++row) {
         const auto& event = events.at(std::size_t(row));
-        m_eventTable->setItem(row, 0, new QTableWidgetItem(shortClock(event.atMs)));
-        auto* description = new QTableWidgetItem(QString::fromStdString(event.description));
+        auto* time = textCell(shortClock(event.atMs));
+        time->setData(Qt::UserRole, qlonglong(event.atMs));
+        time->setForeground(palette::TextSecondary);
+        m_eventTable->setItem(row, 0, time);
+        auto* description = textCell(QString::fromStdString(event.description));
         switch (event.severity) {
         case analytics::EventSeverity::Alert:
             description->setForeground(palette::Danger);
@@ -360,7 +567,7 @@ void ReviewPanel::setEventsTable(const std::vector<analytics::SurveyEvent>& even
         }
         m_eventTable->setItem(row, 1, description);
     }
-    m_tabs->setTabText(1, QStringLiteral("EVENTS (%1)").arg(events.size()));
+    m_tabs->setTabText(1, QStringLiteral("Events (%1)").arg(events.size()));
 }
 
 void ReviewPanel::clearAnalytics()
@@ -372,4 +579,11 @@ void ReviewPanel::clearAnalytics()
     m_trackTable->setRowCount(0);
     m_eventTable->setRowCount(0);
     m_countTotal->clear();
+    m_tabs->setTabText(0, QStringLiteral("Tracks"));
+    m_tabs->setTabText(1, QStringLiteral("Events"));
+}
+
+void ReviewPanel::showEventsTab()
+{
+    m_tabs->setCurrentIndex(1);
 }

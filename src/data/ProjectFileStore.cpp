@@ -1,6 +1,8 @@
 #include "data/ProjectFileStore.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,9 +28,19 @@ bool ProjectFileStore::save(const QString& path, const domain::ProjectManifest& 
         setError(error, QString::fromStdString(reason));
         return false;
     }
+    // Media inside the project folder is written relative to it, so the
+    // folder can be moved or zipped and still open; linked media elsewhere
+    // stays absolute.
+    const QDir projectFolder = QFileInfo(path).absoluteDir();
+    const QString prefix = QDir::cleanPath(projectFolder.absolutePath()) + QLatin1Char('/');
     QJsonArray media;
-    for (const auto& item : manifest.mediaPaths)
-        media.append(QString::fromStdString(item));
+    for (const auto& item : manifest.mediaPaths) {
+        const QString value = QString::fromStdString(item);
+        const QString absolute = QDir::cleanPath(projectFolder.absoluteFilePath(value));
+        media.append(QFileInfo(value).isAbsolute() && absolute.startsWith(prefix, Qt::CaseInsensitive)
+                         ? projectFolder.relativeFilePath(absolute)
+                         : value);
+    }
     const QJsonObject object{
         {QStringLiteral("version"), manifest.schemaVersion},
         {QStringLiteral("projectId"), QString::fromStdString(manifest.projectId)},
@@ -72,8 +84,16 @@ bool ProjectFileStore::load(const QString& path, domain::ProjectManifest& manife
     candidate.createdAtMs = object.value(QStringLiteral("createdAtMs")).toInteger(-1);
     candidate.updatedAtMs = object.value(QStringLiteral("updatedAtMs")).toInteger(-1);
     candidate.databasePath = object.value(QStringLiteral("database")).toString().toStdString();
-    for (const auto item : object.value(QStringLiteral("media")).toArray())
-        candidate.mediaPaths.push_back(item.toString().toStdString());
+    // Relative entries are inside the project folder; resolve them so the
+    // rest of the application always works with absolute paths.
+    const QDir projectFolder = QFileInfo(path).absoluteDir();
+    for (const auto item : object.value(QStringLiteral("media")).toArray()) {
+        const QString value = item.toString();
+        candidate.mediaPaths.push_back(
+            (QFileInfo(value).isAbsolute() ? QDir::cleanPath(value)
+                                           : QDir::cleanPath(projectFolder.absoluteFilePath(value)))
+                .toStdString());
+    }
     std::string reason;
     if (!domain::isValid(candidate, &reason)) {
         setError(error, QStringLiteral("Invalid project: %1").arg(QString::fromStdString(reason)));

@@ -27,7 +27,7 @@ class BoundingBox:
     def center(self) -> tuple[float, float]:
         return ((self.x1 + self.x2) / 2.0, (self.y1 + self.y2) / 2.0)
 
-    def clipped(self, width: int, height: int) -> "BoundingBox":
+    def clipped(self, width: int, height: int) -> BoundingBox:
         return BoundingBox(
             max(0.0, min(self.x1, width - 1.0)),
             max(0.0, min(self.y1, height - 1.0)),

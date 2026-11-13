@@ -45,4 +45,43 @@ void SettingsController::rememberRecentProject(const QString &path) {
   save(updated);
 }
 
+namespace {
+std::string normalizedProjectPath(const QString &path) {
+  return QDir::cleanPath(QFileInfo(path).absoluteFilePath()).toStdString();
+}
+} // namespace
+
+bool SettingsController::forgetRecentProject(const QString &path) {
+  auto updated = m_settings;
+  auto &recent = updated.storage.recentProjects;
+  const auto entry = normalizedProjectPath(path);
+  const auto before = recent.size();
+  recent.erase(std::remove_if(recent.begin(), recent.end(),
+                              [&entry](const std::string &item) {
+                                return item == entry ||
+                                       normalizedProjectPath(
+                                           QString::fromStdString(item)) == entry;
+                              }),
+               recent.end());
+  if (recent.size() == before)
+    return false;
+  return save(updated);
+}
+
+int SettingsController::forgetMissingRecentProjects() {
+  auto updated = m_settings;
+  auto &recent = updated.storage.recentProjects;
+  const auto before = recent.size();
+  recent.erase(std::remove_if(recent.begin(), recent.end(),
+                              [](const std::string &item) {
+                                return !QFileInfo::exists(
+                                    QString::fromStdString(item));
+                              }),
+               recent.end());
+  const int removed = int(before - recent.size());
+  if (removed > 0 && !save(updated))
+    return 0;
+  return removed;
+}
+
 } // namespace aquatrack::application

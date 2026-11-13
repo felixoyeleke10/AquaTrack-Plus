@@ -110,8 +110,13 @@ bool JsonObservationRepository::saveSurvey(const domain::Survey &value,
     error = "invalid survey";
     return false;
   }
+  const auto previous = m_surveys;
   m_surveys[value.id] = value;
-  return persist(error);
+  if (!persist(error)) {
+    m_surveys = previous;
+    return false;
+  }
+  return true;
 }
 bool JsonObservationRepository::saveObservations(
     std::span<const domain::Observation> values, std::string &error) {
@@ -120,11 +125,18 @@ bool JsonObservationRepository::saveObservations(
       error = "invalid observation";
       return false;
     }
+  const auto previous = m_observations;
+  const auto previousVideos = m_videos;
   for (const auto &value : values)
     m_observations[value.id] = value;
   for (const auto &value : values)
     m_videos.insert(value.videoId);
-  return persist(error);
+  if (!persist(error)) {
+    m_observations = previous;
+    m_videos = previousVideos;
+    return false;
+  }
+  return true;
 }
 
 bool JsonObservationRepository::replaceObservationsForVideo(
@@ -154,6 +166,23 @@ bool JsonObservationRepository::replaceObservationsForVideo(
   }
   return true;
 }
+bool JsonObservationRepository::removeVideo(const domain::VideoId &id,
+                                            std::string &error) {
+  if (!m_videos.contains(id))
+    return true;
+  const auto previous = m_observations;
+  const auto previousVideos = m_videos;
+  std::erase_if(m_observations,
+                [&id](const auto &item) { return item.second.videoId == id; });
+  m_videos.erase(id);
+  if (!persist(error)) {
+    m_observations = previous;
+    m_videos = previousVideos;
+    return false;
+  }
+  return true;
+}
+
 std::optional<domain::Survey>
 JsonObservationRepository::survey(const domain::SurveyId &id) const {
   const auto found = m_surveys.find(id);
@@ -190,7 +219,7 @@ bool JsonObservationRepository::persist(std::string &error) const {
                                            {"surveys", surveys},
                                            {"videos", videos},
                                            {"observations", observations}})
-                     .toJson(QJsonDocument::Indented)) < 0 ||
+                     .toJson(QJsonDocument::Compact)) < 0 ||
       !file.commit()) {
     error = file.errorString().toStdString();
     return false;

@@ -1,0 +1,51 @@
+{
+    "clips": [
+        {
+            "bytes": 9096694,
+            "codec": "h264",
+            "durationMs": 22789,
+            "frameRate": 29.97002997002997,
+            "frames": 683,
+            "height": 1080,
+            "modified": "2026-09-01T17:42:26Z",
+            "path": "../video_045.mp4",
+            "width": 1920
+        },
+        {
+            "bytes": 7731893,
+            "codec": "h264",
+            "durationMs": 19653,
+            "frameRate": 29.97002997002997,
+            "frames": 589,
+            "height": 1080,
+            "modified": "2026-09-01T17:42:26Z",
+            "path": "../video_046.mp4",
+            "width": 1920
+        },
+        {
+            "bytes": 3307124,
+            "codec": "h264",
+            "durationMs": 9443,
+            "frameRate": 29.97002997002997,
+            "frames": 283,
+            "height": 1080,
+            "modified": "2026-09-01T17:42:26Z",
+            "path": "../video_047.mp4",
+            "width": 1920
+        },
+        {
+            "bytes": 16756890,
+            "codec": "h264",
+            "durationMs": 23657,
+            "frameRate": 29.97002997002997,
+            "frames": 709,
+            "height": 1080,
+            "modified": "2026-09-01T17:42:26Z",
+            "path": "../video_048.mp4",
+            "width": 1920
+        }
+    ],
+    "format": "aquatrack-video-sequence",
+    "name": "Transect 045-048",
+    "version": 1
+}

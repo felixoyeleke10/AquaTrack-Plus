@@ -7,7 +7,6 @@ import yaml
 from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
-
 ROOT = Path(r"D:\Software_and_Web\softwares\AquaTrack+")
 DATASET_YAML = Path(r"C:\Users\oyele\AquaTrack_data\sfishtrack_yolo\dataset.yaml")
 WEIGHTS = ROOT / "runs/fish_detector_benchmark/faster_rcnn_converged/weights/best.pt"

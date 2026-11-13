@@ -37,6 +37,15 @@ bool AnnotationController::erase(const domain::ObservationId &id) {
   changed();
   return true;
 }
+bool AnnotationController::mergeTracks(domain::LocalTrackId source,
+                                       domain::LocalTrackId target,
+                                       std::int64_t fromFrame) {
+  if (!m_session ||
+      !m_session->mergeTracks(m_videoId, source, target, fromFrame))
+    return false;
+  changed();
+  return true;
+}
 bool AnnotationController::undo() {
   if (!m_session || !m_session->undo())
     return false;

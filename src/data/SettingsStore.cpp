@@ -25,7 +25,7 @@ bool SettingsStore::save(const QString &path,
   const QJsonObject storage{
       {"defaultProjectDirectory",
        QString::fromStdString(s.storage.defaultProjectDirectory)},
-      {"externalMedia", s.storage.useExternalMediaReferences},
+      {"mediaImport", QString::fromStdString(s.storage.mediaImport)},
       {"recentProjects", recent}};
   QJsonObject root{
       {"video", QJsonObject{{"decodeThreads", s.video.decodeThreads},
@@ -47,6 +47,11 @@ bool SettingsStore::save(const QString &path,
       {"export",
        QJsonObject{{"includeConfidence", s.exportSettings.includeConfidence},
                    {"includeUnverified", s.exportSettings.includeUnverified}}},
+      {"analysis",
+       QJsonObject{
+           {"pythonExecutable",
+            QString::fromStdString(s.analysis.pythonExecutable)},
+           {"tracker", QString::fromStdString(s.analysis.tracker)}}},
       {"appearance",
        QJsonObject{{"theme", QString::fromStdString(s.appearance.theme)},
                    {"interfaceScale", s.appearance.interfaceScale}}}};
@@ -80,7 +85,8 @@ bool SettingsStore::load(const QString &path,
   const auto root = doc.object(), v = root["video"].toObject(),
              d = root["detection"].toObject(), t = root["tracking"].toObject(),
              p = root["pipeline"].toObject(), st = root["storage"].toObject(),
-             e = root["export"].toObject(), a = root["appearance"].toObject();
+             e = root["export"].toObject(), a = root["appearance"].toObject(),
+             an = root["analysis"].toObject();
   candidate.video.decodeThreads =
       v["decodeThreads"].toInt(candidate.video.decodeThreads);
   candidate.video.frameBufferSize =
@@ -106,8 +112,11 @@ bool SettingsStore::load(const QString &path,
       p["visibleFirst"].toBool(candidate.pipeline.processVisibleFirst);
   candidate.storage.defaultProjectDirectory =
       st["defaultProjectDirectory"].toString().toStdString();
-  candidate.storage.useExternalMediaReferences =
-      st["externalMedia"].toBool(candidate.storage.useExternalMediaReferences);
+  // "externalMedia" (a yes/no flag that nothing used) is superseded.
+  candidate.storage.mediaImport =
+      st["mediaImport"]
+          .toString(QString::fromStdString(candidate.storage.mediaImport))
+          .toStdString();
   for (const auto value : st["recentProjects"].toArray()) {
     if (candidate.storage.recentProjects.size() >=
         system::settings::MaxRecentProjects)
@@ -120,6 +129,12 @@ bool SettingsStore::load(const QString &path,
       e["includeConfidence"].toBool(candidate.exportSettings.includeConfidence);
   candidate.exportSettings.includeUnverified =
       e["includeUnverified"].toBool(candidate.exportSettings.includeUnverified);
+  candidate.analysis.pythonExecutable =
+      an["pythonExecutable"].toString().toStdString();
+  candidate.analysis.tracker =
+      an["tracker"]
+          .toString(QString::fromStdString(candidate.analysis.tracker))
+          .toStdString();
   candidate.appearance.theme =
       a["theme"]
           .toString(QString::fromStdString(candidate.appearance.theme))

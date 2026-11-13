@@ -1,4 +1,5 @@
 #include "ui/MainWindow.h"
+#include "ui/AppStyle.h"
 #include "ui/AppTheme.h"
 #include "ui/common/Glyphs.h"
 
@@ -12,7 +13,7 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     application.setApplicationName(QStringLiteral("AquaTrack"));
     application.setOrganizationName(QStringLiteral("AquaTrack"));
-    application.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    application.setStyle(new aquatrack::ui::AppStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
     // Painted rather than shipped as an asset, so the window, taskbar, and
     // in-app brand mark can never drift apart.
     application.setWindowIcon(QIcon(aquatrack::ui::glyphPixmap(

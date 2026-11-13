@@ -2,6 +2,8 @@
 #include "application/controllers/ProjectController.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QTemporaryDir>
 
 int main(int argc, char *argv[]) {
@@ -16,8 +18,13 @@ int main(int argc, char *argv[]) {
                                        QStringLiteral("Survey 2026"), &error),
               "create project");
   requireTest(controller.observationStorePath() ==
-                  directory.filePath(QStringLiteral("observations.json")),
-              "project-relative observation store");
+                  directory.filePath(QStringLiteral("annotations/observations.json")),
+              "observation store lives in the annotations folder");
+  for (const char *folder : {"media", "annotations", "models", "exports", "snapshots"})
+    requireTest(QDir(directory.filePath(QString::fromLatin1(folder))).exists(),
+                "project folder layout created");
+  requireTest(QFile::exists(directory.filePath(QStringLiteral("README.txt"))),
+              "project README written");
   requireTest(controller.addMedia(
                   directory.filePath(QStringLiteral("video.mp4")), &error),
               "add media");

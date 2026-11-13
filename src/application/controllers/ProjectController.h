@@ -15,6 +15,8 @@ public:
   [[nodiscard]] bool hasProject() const { return m_manifest.has_value(); }
   [[nodiscard]] const domain::ProjectManifest *project() const;
   [[nodiscard]] QString projectPath() const { return m_path; }
+  // True when the manifest in memory differs from the file on disk.
+  [[nodiscard]] bool isDirty() const { return m_dirty; }
   [[nodiscard]] QString observationStorePath() const;
   bool createProject(const QString &path, const QString &name,
                      QString *error = nullptr);
@@ -31,6 +33,7 @@ private:
   data::ProjectFileStore m_store;
   std::optional<domain::ProjectManifest> m_manifest;
   QString m_path;
+  bool m_dirty = false;
 };
 
 } // namespace aquatrack::application

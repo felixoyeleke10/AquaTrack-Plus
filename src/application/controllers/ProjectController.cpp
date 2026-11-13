@@ -1,5 +1,7 @@
 #include "application/controllers/ProjectController.h"
 
+#include "application/ProjectLayout.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -31,6 +33,11 @@ bool ProjectController::createProject(const QString &path, const QString &name,
       *error = QStringLiteral("Project name is required");
     return false;
   }
+  // The folder around the manifest becomes the project: media, annotations,
+  // models, exports and snapshots each get a home inside it.
+  const ProjectLayout layout(path);
+  if (!layout.create(error))
+    return false;
   const auto now = QDateTime::currentMSecsSinceEpoch();
   domain::ProjectManifest candidate{
       .projectId =
@@ -38,11 +45,13 @@ bool ProjectController::createProject(const QString &path, const QString &name,
       .name = name.trimmed().toStdString(),
       .createdAtMs = now,
       .updatedAtMs = now,
+      .databasePath = ProjectLayout::ObservationStore,
   };
   if (!m_store.save(path, candidate, error))
     return false;
   m_manifest = std::move(candidate);
   m_path = QFileInfo(path).absoluteFilePath();
+  m_dirty = false;
   emit projectChanged();
   emit projectSaved(m_path);
   return true;
@@ -54,6 +63,7 @@ bool ProjectController::openProject(const QString &path, QString *error) {
     return false;
   m_manifest = std::move(candidate);
   m_path = QFileInfo(path).absoluteFilePath();
+  m_dirty = false;
   emit projectChanged();
   return true;
 }
@@ -67,6 +77,7 @@ bool ProjectController::saveProject(QString *error) {
   m_manifest->updatedAtMs = QDateTime::currentMSecsSinceEpoch();
   if (!m_store.save(m_path, *m_manifest, error))
     return false;
+  m_dirty = false;
   emit projectSaved(m_path);
   return true;
 }
@@ -82,6 +93,7 @@ bool ProjectController::addMedia(const QString &path, QString *error) {
   if (std::find(m_manifest->mediaPaths.begin(), m_manifest->mediaPaths.end(),
                 normalized) == m_manifest->mediaPaths.end()) {
     m_manifest->mediaPaths.push_back(normalized);
+    m_dirty = true;
     emit projectChanged();
   }
   return true;
@@ -103,6 +115,7 @@ bool ProjectController::removeMedia(const QString &path, QString *error) {
     return false;
   }
   media.erase(removed, media.end());
+  m_dirty = true;
   emit projectChanged();
   return true;
 }

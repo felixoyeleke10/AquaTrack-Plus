@@ -23,3 +23,10 @@ build/
 *.mov
 # Allow a small repository-hosted demonstration clip when one is added.
 !assets/demo.mp4
+.pytest_tmp/
+
+# Scratch and generated documents.
+/tmp/
+/output/
+# Per-machine review state kept inside project folders.
+.aquatrack/

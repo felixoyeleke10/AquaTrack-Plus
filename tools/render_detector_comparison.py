@@ -1,9 +1,7 @@
 import json
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
-
 
 ROOT = Path(r"D:\Software_and_Web\softwares\AquaTrack+")
 METRICS = ROOT / "runs/fish_detector_benchmark/metrics"

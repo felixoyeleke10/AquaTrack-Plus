@@ -32,6 +32,11 @@ struct DatasetDescriptor {
     QStringList classNames;
     QVector<DatasetSplit> splits;
     QString manifestPath;
+    // Rendered or simulated imagery (for example brackishMOTSynth), which
+    // trains and stress-tests detectors but is not survey footage.
+    bool synthetic = false;
+    // First image of the dataset, for thumbnails; empty if none on disk.
+    QString previewImage;
 
     [[nodiscard]] bool isReviewable() const
     {

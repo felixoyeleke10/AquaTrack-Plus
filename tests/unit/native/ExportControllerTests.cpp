@@ -29,7 +29,7 @@ int main() {
   QFile mot(motPath);
   requireTest(mot.open(QIODevice::ReadOnly | QIODevice::Text),
               "open MOT export");
-  requireTest(mot.readAll().startsWith("2,7,1.000"), "MOT content");
+  requireTest(mot.readAll().startsWith("1,7,1.000"), "MOT content");
   requireTest(!controller.exportCsv(QString(), {observation}, &error),
               "reject empty export path");
   return 0;

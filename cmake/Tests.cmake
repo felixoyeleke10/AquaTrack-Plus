@@ -57,6 +57,18 @@ add_executable(aquatrack-project-store-tests
 target_link_libraries(aquatrack-project-store-tests PRIVATE aquatrack-data)
 add_test(NAME AquaTrackProjectStore COMMAND aquatrack-project-store-tests)
 
+add_executable(aquatrack-media-importer-tests
+    tests/unit/native/MediaImporterTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-media-importer-tests PRIVATE tests/unit/native)
+target_link_libraries(aquatrack-media-importer-tests PRIVATE aquatrack-application)
+add_test(NAME AquaTrackMediaImporter COMMAND aquatrack-media-importer-tests)
+
+add_executable(aquatrack-media-pipeline-tests
+    tests/unit/native/MediaPipelineTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-media-pipeline-tests PRIVATE tests/unit/native)
+target_link_libraries(aquatrack-media-pipeline-tests PRIVATE aquatrack-application)
+add_test(NAME AquaTrackMediaPipeline COMMAND aquatrack-media-pipeline-tests)
+
 add_executable(aquatrack-project-controller-tests
     tests/unit/native/ProjectControllerTests.cpp tests/unit/native/TestSupport.h)
 target_link_libraries(aquatrack-project-controller-tests PRIVATE aquatrack-application)
@@ -104,6 +116,26 @@ target_include_directories(aquatrack-ui-smoke-tests PRIVATE ${PROJECT_SOURCE_DIR
 target_link_libraries(aquatrack-ui-smoke-tests PRIVATE aquatrack-ui)
 add_test(NAME AquaTrackUiSmoke COMMAND aquatrack-ui-smoke-tests)
 
+add_executable(aquatrack-ui-wiring-tests tests/ui/MainWindowWiringTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-ui-wiring-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-ui-wiring-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackUiWiring COMMAND aquatrack-ui-wiring-tests)
+
+add_executable(aquatrack-project-flow-tests tests/ui/ProjectFlowTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-project-flow-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-project-flow-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackProjectFlow COMMAND aquatrack-project-flow-tests)
+
+add_executable(aquatrack-datasets-page-tests tests/ui/DatasetsPageTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-datasets-page-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-datasets-page-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackDatasetsPage COMMAND aquatrack-datasets-page-tests)
+
+add_executable(aquatrack-glyph-tests tests/ui/GlyphTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-glyph-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-glyph-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackGlyphs COMMAND aquatrack-glyph-tests)
+
 add_executable(aquatrack-models-page-tests tests/ui/ModelsPageTests.cpp tests/unit/native/TestSupport.h)
 target_include_directories(aquatrack-models-page-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
 target_link_libraries(aquatrack-models-page-tests PRIVATE aquatrack-ui)
@@ -114,3 +146,24 @@ target_include_directories(aquatrack-videos-page-tests PRIVATE ${PROJECT_SOURCE_
 target_link_libraries(aquatrack-videos-page-tests PRIVATE aquatrack-ui)
 add_test(NAME AquaTrackVideosPage COMMAND aquatrack-videos-page-tests)
 add_test(NAME AquaTrackCliHelp COMMAND aquatrack-cli --help)
+
+add_executable(aquatrack-review-video-tests tests/ui/ReviewVideoTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-review-video-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-review-video-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackReviewVideo COMMAND aquatrack-review-video-tests)
+
+add_executable(aquatrack-project-switch-tests tests/ui/ProjectSwitchTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-project-switch-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-project-switch-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackProjectSwitch COMMAND aquatrack-project-switch-tests)
+
+add_executable(aquatrack-sequence-editing-tests
+    tests/unit/native/SequenceEditingTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-sequence-editing-tests PRIVATE tests/unit/native)
+target_link_libraries(aquatrack-sequence-editing-tests PRIVATE aquatrack-application)
+add_test(NAME AquaTrackSequenceEditing COMMAND aquatrack-sequence-editing-tests)
+
+add_executable(aquatrack-sequence-edit-flow-tests tests/ui/SequenceEditFlowTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-sequence-edit-flow-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-sequence-edit-flow-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackSequenceEditFlow COMMAND aquatrack-sequence-edit-flow-tests)

@@ -15,57 +15,96 @@
 namespace aquatrack::ui {
 namespace {
 
-// A thin rule, not a ribbon: the whole strip is 30px so it reads as a
-// companion to the transport above rather than a second panel.
-constexpr int kHeight = 30;
-constexpr int kLaneY = 20;    // baseline the marks sit on
-constexpr int kTickHalf = 6;  // marks extend this far either side
-constexpr int kTickWidth = 2;
-constexpr int kGutter = 26;   // room for the "ID" caption
+// ---- Track lanes geometry ----------------------------------------------
+constexpr int kGutter = 60;      // track labels
+constexpr int kPinRow = 16;      // event pins above the lanes
+constexpr int kAxis = 16;        // time labels below the lanes
+constexpr int kRightPad = 6;
+constexpr int kEmptyHeight = 44;
 constexpr int kHitSlop = 4;
-constexpr int kThumbGap = 6;
+constexpr int kAxisDivisions = 4;
+// More tracks than this and tracks that never overlap share rows.
+constexpr int kMaxDedicatedRows = 12;
 
-QString clockLabel(qint64 milliseconds)
-{
-    const qint64 seconds = std::max<qint64>(0, milliseconds) / 1000;
-    return QStringLiteral("%1:%2")
-        .arg(seconds / 60, 2, 10, QLatin1Char('0'))
-        .arg(seconds % 60, 2, 10, QLatin1Char('0'));
-}
+// ---- Filmstrip ----------------------------------------------------------
+constexpr int kThumbGap = 6;
 
 }  // namespace
 
-// ----------------------------------------------------------- EventTimeline
+// -------------------------------------------------------------- TrackLanes
 
-EventTimeline::EventTimeline(QWidget* parent) : QWidget(parent)
+TrackLanes::TrackLanes(QWidget* parent) : QWidget(parent)
 {
-    setFixedHeight(kHeight);
+    setObjectName(QStringLiteral("trackLanes"));
     setCursor(Qt::PointingHandCursor);
     setMouseTracking(true);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
 }
 
-void EventTimeline::setSequenceLength(int frames, int frameRate)
+void TrackLanes::setSequenceLength(int frames, int frameRate)
 {
     m_frames = std::max(0, frames);
     m_frameRate = std::max(1, frameRate);
     update();
 }
 
-void EventTimeline::setMarkers(QVector<Marker> markers)
+void TrackLanes::setLanes(QVector<Lane> lanes)
+{
+    // Earliest first, so the chart reads left to right as animals arrive.
+    std::sort(lanes.begin(), lanes.end(), [](const Lane& left, const Lane& right) {
+        const int leftStart = left.segments.isEmpty() ? 0 : left.segments.first().first;
+        const int rightStart = right.segments.isEmpty() ? 0 : right.segments.first().first;
+        if (leftStart != rightStart)
+            return leftStart < rightStart;
+        return left.trackId < right.trackId;
+    });
+    m_lanes = std::move(lanes);
+    m_hoveredLane = -1;
+
+    // A dedicated, labelled row per track while that stays readable;
+    // beyond that, pack: each track goes in the first row that is free by
+    // the time it starts, with a little air between neighbours.
+    m_rowOfLane.clear();
+    m_packed = m_lanes.size() > kMaxDedicatedRows;
+    if (!m_packed) {
+        for (int index = 0; index < m_lanes.size(); ++index)
+            m_rowOfLane.push_back(index);
+        m_rows = int(m_lanes.size());
+    } else {
+        const int air = std::max(1, m_frames / 150);
+        QVector<int> rowEnds;
+        for (const auto& lane : m_lanes) {
+            const int first = lane.segments.isEmpty() ? 0 : lane.segments.first().first;
+            const int last = lane.segments.isEmpty() ? 0 : lane.segments.last().second;
+            int row = 0;
+            while (row < rowEnds.size() && rowEnds[row] + air >= first)
+                ++row;
+            if (row == rowEnds.size())
+                rowEnds.push_back(last);
+            else
+                rowEnds[row] = last;
+            m_rowOfLane.push_back(row);
+        }
+        m_rows = int(rowEnds.size());
+    }
+    updateGeometry();
+    update();
+}
+
+void TrackLanes::setMarkers(QVector<Marker> markers)
 {
     m_markers = std::move(markers);
     m_hoveredMarker = -1;
     update();
 }
 
-void EventTimeline::setTicks(QVector<Tick> ticks)
+void TrackLanes::setLinks(QVector<Link> links)
 {
-    m_ticks = std::move(ticks);
-    m_hoveredTick = -1;
+    m_links = std::move(links);
     update();
 }
 
-void EventTimeline::setCurrentFrame(int frame)
+void TrackLanes::setCurrentFrame(int frame)
 {
     if (m_currentFrame == frame)
         return;
@@ -73,162 +112,322 @@ void EventTimeline::setCurrentFrame(int frame)
     update();
 }
 
-void EventTimeline::clear()
+void TrackLanes::clear()
 {
+    m_lanes.clear();
+    m_rowOfLane.clear();
+    m_rows = 0;
+    m_packed = false;
     m_markers.clear();
-    m_ticks.clear();
+    m_links.clear();
     m_frames = 0;
     m_currentFrame = 0;
+    m_hoveredLane = -1;
     m_hoveredMarker = -1;
-    m_hoveredTick = -1;
+    updateGeometry();
     update();
 }
 
-QRectF EventTimeline::lane() const
+qreal TrackLanes::idealPitch() const
 {
-    return QRectF(kGutter, 0, std::max(1.0, double(width() - kGutter - 4)), kHeight);
+    // Comfortable lanes for a handful of tracks; thinner ones for crowded
+    // sequences so the chart never pushes the frame view off screen.
+    const int count = m_rows;
+    if (count <= 6)
+        return 18.0;
+    if (count <= 12)
+        return 14.0;
+    return std::max(4.0, 168.0 / count);
 }
 
-double EventTimeline::xForFrame(int frame) const
+qreal TrackLanes::lanePitch() const
 {
-    const auto strip = lane();
+    if (m_lanes.isEmpty())
+        return idealPitch();
+    // Whatever height the layout actually granted, shared between lanes.
+    const qreal available = std::max(0, height() - kPinRow - kAxis);
+    return std::max(2.0, std::min(idealPitch(), available / std::max(1, m_rows)));
+}
+
+QSize TrackLanes::sizeHint() const
+{
+    if (m_lanes.isEmpty())
+        return {400, kEmptyHeight};
+    return {400, kPinRow + int(std::ceil(m_rows * idealPitch())) + kAxis};
+}
+
+QSize TrackLanes::minimumSizeHint() const
+{
+    if (m_lanes.isEmpty())
+        return {120, kEmptyHeight};
+    // Readable bars for up to six lanes even in a short window; the
+    // filmstrip below gives way first (see Filmstrip).
+    const int lanes = int(std::ceil(std::min(m_rows, 6) * 8.0));
+    return {120, kPinRow + lanes + kAxis};
+}
+
+QRectF TrackLanes::plot() const
+{
+    return QRectF(kGutter, kPinRow, std::max(1.0, double(width() - kGutter - kRightPad)),
+                  m_rows * lanePitch());
+}
+
+QRectF TrackLanes::laneRect(int index) const
+{
+    const auto area = plot();
+    const qreal pitch = lanePitch();
+    const qreal bar = pitch >= 10.0 ? pitch - 6.0 : std::max(2.0, pitch - 1.0);
+    const int row = index >= 0 && index < m_rowOfLane.size() ? m_rowOfLane[index] : index;
+    const qreal top = area.top() + row * pitch + (pitch - bar) / 2.0;
+    return QRectF(area.left(), top, area.width(), bar);
+}
+
+double TrackLanes::xForFrame(int frame) const
+{
+    // Frame f (1-based) occupies [(f-1)/N, f/N] of the plot width.
+    const auto area = plot();
     if (m_frames <= 0)
-        return strip.left();
-    return strip.left() + std::clamp(double(frame) / m_frames, 0.0, 1.0) * strip.width();
+        return area.left();
+    return area.left() + std::clamp(double(frame - 1) / m_frames, 0.0, 1.0) * area.width();
 }
 
-int EventTimeline::frameAt(int x) const
+int TrackLanes::frameAt(double x) const
 {
-    const auto strip = lane();
-    if (m_frames <= 0 || strip.width() <= 0)
+    const auto area = plot();
+    if (m_frames <= 0)
         return 0;
-    const double ratio = std::clamp((x - strip.left()) / strip.width(), 0.0, 1.0);
-    return std::clamp(int(std::lround(ratio * m_frames)), 1, m_frames);
+    const double ratio = std::clamp((x - area.left()) / area.width(), 0.0, 1.0);
+    return std::clamp(int(ratio * m_frames) + 1, 1, m_frames);
 }
 
-int EventTimeline::markerAt(const QPoint& point) const
+int TrackLanes::laneAt(const QPoint& point) const
 {
-    // Event pins live above the rule; track marks live on it.
-    if (point.y() > kLaneY - kTickHalf)
+    const auto area = plot();
+    if (point.y() < area.top() || point.y() >= area.bottom())
+        return -1;
+    const int row = int((point.y() - area.top()) / lanePitch());
+    if (row < 0 || row >= m_rows)
+        return -1;
+    if (!m_packed)
+        return row < m_lanes.size() ? row : -1;
+    // Several tracks share a packed row: the one under the pointer, or the
+    // nearest within a few pixels.
+    const int frame = frameAt(point.x());
+    const int slop =
+        std::max(1, int(std::ceil(kHitSlop * double(m_frames) / std::max(1.0, area.width()))));
+    int best = -1;
+    int bestDistance = slop + 1;
+    for (int index = 0; index < m_lanes.size(); ++index) {
+        if (m_rowOfLane[index] != row || m_lanes[index].segments.isEmpty())
+            continue;
+        const int first = m_lanes[index].segments.first().first;
+        const int last = m_lanes[index].segments.last().second;
+        const int distance = frame < first ? first - frame : frame > last ? frame - last : 0;
+        if (distance < bestDistance) {
+            best = index;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+
+int TrackLanes::markerAt(const QPoint& point) const
+{
+    if (point.y() > kPinRow + 2)
         return -1;
     for (int index = 0; index < m_markers.size(); ++index) {
         const auto& marker = m_markers.at(index);
         const double left = xForFrame(marker.startFrame);
-        const double right = xForFrame(std::max(marker.startFrame, marker.endFrame));
+        const double right = xForFrame(std::max(marker.startFrame, marker.endFrame) + 1);
         if (point.x() >= left - kHitSlop && point.x() <= right + kHitSlop)
             return index;
     }
     return -1;
 }
 
-int EventTimeline::tickAt(const QPoint& point) const
+int TrackLanes::laneIndexOf(int trackId) const
 {
-    if (point.y() < kLaneY - kTickHalf - kHitSlop)
-        return -1;
-    int best = -1;
-    double bestDistance = kHitSlop + 1.0;
-    for (int index = 0; index < m_ticks.size(); ++index) {
-        const double distance = std::abs(xForFrame(m_ticks.at(index).frame) - point.x());
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            best = index;
-        }
-    }
-    return best;
+    for (int index = 0; index < m_lanes.size(); ++index)
+        if (m_lanes.at(index).trackId == trackId)
+            return index;
+    return -1;
 }
 
-void EventTimeline::paintEvent(QPaintEvent* event)
+bool TrackLanes::visibleAt(const Lane& lane, int frame) const
+{
+    return std::any_of(lane.segments.cbegin(), lane.segments.cend(), [frame](const auto& run) {
+        return frame >= run.first && frame <= run.second;
+    });
+}
+
+QString TrackLanes::clock(int frame) const
+{
+    const qint64 seconds = qint64(std::max(0, frame - 1)) / m_frameRate;
+    return QStringLiteral("%1:%2")
+        .arg(seconds / 60, 2, 10, QLatin1Char('0'))
+        .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+}
+
+void TrackLanes::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    QFont caption = painter.font();
-    caption.setPointSizeF(7.2);
-    painter.setFont(caption);
+    QFont small = painter.font();
+    small.setPointSizeF(7.4);
+    painter.setFont(small);
 
-    if (m_frames <= 0) {
+    if (m_frames <= 0 || m_lanes.isEmpty()) {
         painter.setPen(palette::TextDim);
         painter.drawText(rect(), Qt::AlignCenter,
-                         QStringLiteral("Track marks appear once a sequence is open"));
+                         m_frames <= 0 ? QStringLiteral("Track lanes appear once a sequence is open")
+                                       : QStringLiteral("No tracks in this sequence"));
         return;
     }
 
-    const auto strip = lane();
+    const auto area = plot();
+    const qreal pitch = lanePitch();
+    const bool labelled = !m_packed && pitch >= 11.0;
 
-    // ---- Caption and baseline -----------------------------------------
-    painter.setPen(palette::TextDim);
-    painter.drawText(QRectF(0, kLaneY - 7, kGutter - 6, 14), Qt::AlignLeft | Qt::AlignVCenter,
-                     QStringLiteral("ID"));
-    painter.setPen(QPen(palette::LineSoft, 1.0));
-    painter.drawLine(QPointF(strip.left(), kLaneY), QPointF(strip.right(), kLaneY));
+    // ---- Time grid and axis --------------------------------------------
+    for (int step = 0; step <= kAxisDivisions; ++step) {
+        const int frame = 1 + int(std::lround(double(m_frames - 1) * step / kAxisDivisions));
+        const double x = area.left() + area.width() * step / kAxisDivisions;
+        painter.setPen(QPen(palette::LineSoft, 1.0));
+        painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()));
+        painter.setPen(palette::TextDim);
+        const Qt::Alignment align = step == 0                ? Qt::AlignLeft
+                                    : step == kAxisDivisions ? Qt::AlignRight
+                                                             : Qt::AlignHCenter;
+        const QRectF label = step == 0 ? QRectF(x, area.bottom() + 2, 60, kAxis - 2)
+                             : step == kAxisDivisions
+                                 ? QRectF(x - 60, area.bottom() + 2, 60, kAxis - 2)
+                                 : QRectF(x - 30, area.bottom() + 2, 60, kAxis - 2);
+        painter.drawText(label, align | Qt::AlignVCenter, clock(frame));
+    }
 
-    // ---- Event intervals, behind the marks ------------------------------
-    for (int index = 0; index < m_markers.size(); ++index) {
-        const auto& marker = m_markers.at(index);
-        const double left = xForFrame(marker.startFrame);
-        const double right = xForFrame(std::max(marker.startFrame, marker.endFrame));
-        if (right - left <= 2.0)
+    // ---- Interval events shade the whole chart ---------------------------
+    for (const auto& marker : m_markers) {
+        if (marker.endFrame <= marker.startFrame)
             continue;
         QColor band = marker.color;
-        band.setAlpha(index == m_hoveredMarker ? 70 : 38);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(band);
-        painter.drawRoundedRect(
-            QRectF(left, kLaneY - kTickHalf - 1, right - left, kTickHalf * 2 + 2), 3, 3);
-    }
-
-    // ---- Track marks -----------------------------------------------------
-    // One mark per entry or exit, coloured by track. Exits are drawn shorter
-    // and dimmer so a track leaving does not look like another arriving.
-    for (int index = 0; index < m_ticks.size(); ++index) {
-        const auto& tick = m_ticks.at(index);
-        const double x = xForFrame(tick.frame);
-        const bool hovered = index == m_hoveredTick;
-        QColor colour = trackColor(tick.trackId);
-        if (!tick.entering)
-            colour.setAlpha(hovered ? 255 : 150);
-        const double half = tick.entering ? kTickHalf : kTickHalf - 2;
-        const double thickness = hovered ? kTickWidth + 1.0 : kTickWidth;
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(colour);
-        painter.drawRoundedRect(
-            QRectF(x - thickness / 2.0, kLaneY - half, thickness, half * 2), 1, 1);
-    }
-
-    // ---- Event pins, above the rule --------------------------------------
-    for (int index = 0; index < m_markers.size(); ++index) {
-        const auto& marker = m_markers.at(index);
+        band.setAlpha(26);
         const double left = xForFrame(marker.startFrame);
-        const double right = xForFrame(std::max(marker.startFrame, marker.endFrame));
-        const double x = (left + right) / 2.0;
-        QPainterPath pin;
-        pin.moveTo(x, kLaneY - kTickHalf - 1);
-        pin.lineTo(x - 3.5, kLaneY - kTickHalf - 7);
-        pin.lineTo(x + 3.5, kLaneY - kTickHalf - 7);
-        pin.closeSubpath();
+        const double right = xForFrame(marker.endFrame + 1);
+        painter.fillRect(QRectF(left, area.top(), right - left, area.height()), band);
+    }
+
+    // ---- Lanes ----------------------------------------------------------
+    if (!labelled) {
+        painter.setPen(palette::TextDim);
+        painter.drawText(QRectF(0, area.top(), kGutter - 8, 14), Qt::AlignLeft | Qt::AlignVCenter,
+                         QStringLiteral("%1 tracks").arg(m_lanes.size()));
+        if (m_packed && area.height() >= 30)
+            painter.drawText(QRectF(0, area.top() + 13, kGutter - 8, 14),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             QStringLiteral("%1 rows").arg(m_rows));
+    }
+    // Packed rows: one faint rail per row, drawn once, rather than one per
+    // track stacked on top of each other.
+    if (m_packed) {
         painter.setPen(Qt::NoPen);
-        painter.setBrush(marker.color);
-        painter.drawPath(pin);
-        if (index == m_hoveredMarker) {
-            painter.setPen(QPen(Qt::white, 1.0));
-            painter.setBrush(Qt::NoBrush);
-            painter.drawPath(pin);
+        painter.setBrush(palette::LineSoft);
+        const qreal barHeight = pitch >= 10.0 ? pitch - 6.0 : std::max(2.0, pitch - 1.0);
+        const qreal rail = std::min<qreal>(2.0, barHeight);
+        for (int row = 0; row < m_rows; ++row) {
+            const qreal middle = area.top() + row * pitch + pitch / 2.0;
+            painter.drawRoundedRect(QRectF(area.left(), middle - rail / 2, area.width(), rail), 1, 1);
+        }
+    }
+    for (int index = 0; index < m_lanes.size(); ++index) {
+        const auto& lane = m_lanes.at(index);
+        const QRectF bar = laneRect(index);
+        const bool onScreen = visibleAt(lane, m_currentFrame);
+        const bool hovered = index == m_hoveredLane;
+
+        // Faint rail: the whole sequence, so gaps read as gaps.
+        painter.setPen(Qt::NoPen);
+        if (!m_packed) {
+            painter.setBrush(palette::LineSoft);
+            const qreal rail = std::min<qreal>(2.0, bar.height());
+            painter.drawRoundedRect(
+                QRectF(bar.left(), bar.center().y() - rail / 2, bar.width(), rail), 1, 1);
+        }
+
+        QColor fill = lane.color;
+        fill.setAlpha(hovered ? 255 : onScreen ? 230 : 120);
+        painter.setBrush(fill);
+        const qreal radius = std::min<qreal>(3.0, bar.height() / 2.0);
+        for (const auto& run : lane.segments) {
+            const double left = xForFrame(run.first);
+            const double right = std::max(left + 2.0, xForFrame(run.second + 1));
+            painter.drawRoundedRect(QRectF(left, bar.top(), right - left, bar.height()), radius,
+                                    radius);
+        }
+
+        if (labelled) {
+            QFont labelFont = small;
+            labelFont.setBold(onScreen || hovered);
+            painter.setFont(labelFont);
+            painter.setPen(onScreen || hovered ? lane.color : palette::TextDim);
+            painter.drawText(QRectF(0, bar.center().y() - pitch / 2, kGutter - 8, pitch),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             QStringLiteral("ID %1").arg(lane.trackId));
+            painter.setFont(small);
         }
     }
 
-    // ---- Playhead ---------------------------------------------------------
-    if (m_currentFrame > 0) {
-        const double x = xForFrame(m_currentFrame);
-        painter.setPen(QPen(palette::Accent, 1.2));
-        painter.drawLine(QPointF(x, kLaneY - kTickHalf - 2), QPointF(x, kLaneY + kTickHalf + 2));
+    // ---- Likely identity switches ----------------------------------------
+    QPen linkPen(palette::Danger, 1.4, Qt::DashLine, Qt::RoundCap);
+    linkPen.setDashPattern({3, 2.5});
+    for (const auto& link : m_links) {
+        const int from = laneIndexOf(link.fromTrack);
+        const int to = laneIndexOf(link.toTrack);
+        if (from < 0 || to < 0)
+            continue;
+        const QPointF start(xForFrame(link.fromFrame + 1), laneRect(from).center().y());
+        const QPointF end(xForFrame(link.toFrame), laneRect(to).center().y());
+        QPainterPath path(start);
+        const double bend = std::max(8.0, (end.x() - start.x()) / 2.0);
+        path.cubicTo(start + QPointF(bend, 0), end - QPointF(bend, 0), end);
+        painter.setPen(linkPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(palette::Accent);
-        painter.drawEllipse(QPointF(x, kLaneY - kTickHalf - 5), 3.4, 3.4);
+        painter.setBrush(palette::Danger);
+        painter.drawEllipse(start, 2.6, 2.6);
+        painter.drawEllipse(end, 2.6, 2.6);
+    }
+
+    // ---- Event pins -------------------------------------------------------
+    for (int index = 0; index < m_markers.size(); ++index) {
+        const auto& marker = m_markers.at(index);
+        const double left = xForFrame(marker.startFrame);
+        const double right = xForFrame(std::max(marker.startFrame, marker.endFrame) + 1);
+        const double x = (left + right) / 2.0;
+        QPainterPath pin;
+        pin.moveTo(x, kPinRow - 3);
+        pin.lineTo(x - 4.0, kPinRow - 10);
+        pin.lineTo(x + 4.0, kPinRow - 10);
+        pin.closeSubpath();
+        painter.setPen(index == m_hoveredMarker ? QPen(Qt::white, 1.0) : Qt::NoPen);
+        painter.setBrush(marker.color);
+        painter.drawPath(pin);
+    }
+
+    // ---- Playhead -----------------------------------------------------------
+    if (m_currentFrame > 0) {
+        const double x = (xForFrame(m_currentFrame) + xForFrame(m_currentFrame + 1)) / 2.0;
+        painter.setPen(QPen(palette::Accent, 1.4));
+        painter.drawLine(QPointF(x, kPinRow - 2), QPointF(x, area.bottom() + 1));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette::AccentHover);
+        painter.drawEllipse(QPointF(x, kPinRow - 3), 3.2, 3.2);
     }
 }
 
-void EventTimeline::mousePressEvent(QMouseEvent* event)
+void TrackLanes::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton || m_frames <= 0)
         return;
@@ -238,50 +437,62 @@ void EventTimeline::mousePressEvent(QMouseEvent* event)
         emit frameRequested(m_markers.at(marker).startFrame);
         return;
     }
-    // Snapping to a nearby mark makes these small targets clickable.
-    const int tick = tickAt(point);
-    emit frameRequested(tick >= 0 ? m_ticks.at(tick).frame : frameAt(point.x()));
+    // A click on a track's label jumps to where that track begins.
+    if (point.x() < kGutter) {
+        const int lane = laneAt(point);
+        if (lane >= 0 && !m_lanes.at(lane).segments.isEmpty())
+            emit frameRequested(m_lanes.at(lane).segments.first().first);
+        return;
+    }
+    emit frameRequested(frameAt(point.x()));
 }
 
-void EventTimeline::mouseMoveEvent(QMouseEvent* event)
+void TrackLanes::mouseMoveEvent(QMouseEvent* event)
 {
     const auto point = event->position().toPoint();
     if (event->buttons() & Qt::LeftButton) {
-        if (m_frames > 0)
+        if (m_frames > 0 && point.x() >= kGutter)
             emit frameRequested(frameAt(point.x()));
         return;
     }
 
     const int marker = markerAt(point);
-    const int tick = marker >= 0 ? -1 : tickAt(point);
-    if (marker != m_hoveredMarker || tick != m_hoveredTick) {
+    const int lane = marker >= 0 ? -1 : laneAt(point);
+    if (marker != m_hoveredMarker || lane != m_hoveredLane) {
         m_hoveredMarker = marker;
-        m_hoveredTick = tick;
+        m_hoveredLane = lane;
         update();
     }
 
     if (marker >= 0) {
         QToolTip::showText(event->globalPosition().toPoint(), m_markers.at(marker).label, this);
-    } else if (tick >= 0) {
-        const auto& value = m_ticks.at(tick);
-        QToolTip::showText(
-            event->globalPosition().toPoint(),
-            QStringLiteral("Track %1 %2 at %3")
-                .arg(value.trackId)
-                .arg(value.entering ? QStringLiteral("enters") : QStringLiteral("leaves"))
-                .arg(clockLabel(qint64(std::max(0, value.frame - 1)) * 1000 / m_frameRate)),
-            this);
+    } else if (lane >= 0) {
+        const auto& value = m_lanes.at(lane);
+        const int first = value.segments.isEmpty() ? 0 : value.segments.first().first;
+        const int last = value.segments.isEmpty() ? 0 : value.segments.last().second;
+        const int gaps = std::max(0, int(value.segments.size()) - 1);
+        QString text = QStringLiteral("Track %1  ·  %2\nFrames %3–%4 (%5–%6)  ·  "
+                                      "%7 observation(s)\n%8")
+                           .arg(value.trackId)
+                           .arg(value.species.isEmpty() ? QStringLiteral("Unknown") : value.species)
+                           .arg(first)
+                           .arg(last)
+                           .arg(clock(first), clock(last))
+                           .arg(value.observations)
+                           .arg(gaps == 0 ? QStringLiteral("Continuous, no gaps")
+                                          : QStringLiteral("Lost %1 time(s) along the way").arg(gaps));
+        QToolTip::showText(event->globalPosition().toPoint(), text, this);
     } else {
         QToolTip::hideText();
     }
 }
 
-void EventTimeline::leaveEvent(QEvent* event)
+void TrackLanes::leaveEvent(QEvent* event)
 {
     Q_UNUSED(event);
-    if (m_hoveredMarker != -1 || m_hoveredTick != -1) {
+    if (m_hoveredMarker != -1 || m_hoveredLane != -1) {
         m_hoveredMarker = -1;
-        m_hoveredTick = -1;
+        m_hoveredLane = -1;
         update();
     }
 }
@@ -290,8 +501,16 @@ void EventTimeline::leaveEvent(QEvent* event)
 
 Filmstrip::Filmstrip(QWidget* parent) : QWidget(parent)
 {
-    setMinimumHeight(62);
+    // Lowest priority in the timeline card: it shrinks before the track
+    // lanes do, and steps aside entirely when there is no room for it.
+    setMinimumHeight(0);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     setCursor(Qt::PointingHandCursor);
+}
+
+QSize Filmstrip::sizeHint() const
+{
+    return {400, 62};
 }
 
 void Filmstrip::setThumbnails(QVector<Thumbnail> thumbnails)
@@ -328,6 +547,8 @@ int Filmstrip::indexAt(const QPoint& point) const
 void Filmstrip::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
+    if (height() < 34)
+        return;  // too short to show a recognisable frame
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);

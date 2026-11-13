@@ -13,6 +13,8 @@ dependencies = [
   "opencv-python-headless>=4.9,<5",
   "PyYAML>=6.0,<7",
   "ultralytics>=8.3,<9",
+  # ByteTrack association (Detect & track in the desktop app).
+  "lap>=0.5.12",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +39,11 @@ packages = ["src/aquatrack"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# basetemp is pinned into the repo because pytest's default location under the
+# user's AppData\Local\Temp is permission-denied on this machine -- without it,
+# `pytest tests` fails at collection with PermissionError on pytest-of-<user>
+# and looks like a broken test suite rather than an environment problem.
+addopts = "-q --basetemp=.pytest_tmp"
 
 [tool.ruff]
 line-length = 100

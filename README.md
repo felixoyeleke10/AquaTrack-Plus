@@ -42,6 +42,42 @@ Run native tests with:
 .\test_cpp.bat
 ```
 
+### Video review, detection and tracking
+
+Review opens three kinds of media, all on one frame-numbered timeline:
+
+- **Video files** (MP4, MOV, MKV, AVI, ...) play directly from the original
+  file. Frames are decoded on a worker thread by one long-running FFmpeg
+  process per clip (1080p sustains >100 fps; seeks are frame-accurate), so
+  scrubbing and playback never block the UI. The build copies `ffmpeg.exe`
+  and `ffprobe.exe` next to `AquaTrack.exe` when it can find them
+  (`winget install Gyan.FFmpeg`).
+- **Sequences**: select several videos on the Videos page and choose
+  *New sequence*. The videos are referenced, not converted; a
+  `sequence.json` in `media/<name>/` lists them in play order. Double-click a
+  sequence to browse its clips; double-click a clip to open Review there.
+- Existing **BrackishMOT sequences** (`seqinfo.ini`, `img1/`, `gt/gt.txt`) open the same way; a sequence is a sequence whether its frames are stored as video or as images.
+
+**Detect & track** runs the active detector from the project's model registry
+(import it from `runs/` on the Models page) with ByteTrack or the IoU tracker,
+using the checkout's `.venv` (`python -m aquatrack.analyze`), and loads the
+tracks for review as unverified model detections. **Import annotations** loads
+ground truth from MOTChallenge `gt.txt` or COCO tracking JSON.
+
+The same steps are scriptable:
+
+```powershell
+build\aquatrack-cli.exe project sequence <file.aqp> "Transect A" a.mp4 b.mp4
+build\aquatrack-cli.exe project model <file.aqp> runs\detect\<run>\weights\best.pt
+build\aquatrack-cli.exe project annotations <file.aqp> media\a.mp4 gt.txt
+build\aquatrack-cli.exe project analyze <file.aqp> media\a.mp4 --model <id>
+```
+
+SFISHTRACK annotations are made on resampled frame extractions, so annotation
+frame k is not MP4 frame k. `tools/sfishtrack_to_mot.py` aligns each annotated
+image to its MP4 frame by content and writes a MOTChallenge `gt.txt`; it
+refuses to write one when the images do not match the video.
+
 The `src/inference/IDetector.h` interface is the extension point for an
 ONNX Runtime or TensorRT detector. Dataset parsing and tracking stay in the C++
 core, while Qt owns presentation. Python remains useful for preparing data,

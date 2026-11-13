@@ -228,7 +228,12 @@ void AnalyticsPage::setObservations(
     while (m_eventList->count() > 1) {
         auto* item = m_eventList->takeAt(1);
         if (item->widget() && item->widget() != m_eventEmpty)
+        {
+            // Out of the layout, a row keeps painting at its last position
+            // until it is deleted; hide it now.
+            item->widget()->hide();
             item->widget()->deleteLater();
+        }
         delete item;
     }
 
@@ -271,7 +276,7 @@ void AnalyticsPage::setObservations(
     tracks.filled = true;
     ChartSeries detections;
     detections.name = QStringLiteral("Observations");
-    detections.color = QColor(0xa7, 0x8b, 0xfa);
+    detections.color = palette::Secondary;
     for (const auto& bin : bins) {
         tracks.values.push_back(double(bin.uniqueTracks));
         detections.values.push_back(double(bin.observations));
@@ -287,7 +292,7 @@ void AnalyticsPage::setObservations(
         DonutSlice slice;
         slice.name = QString::fromStdString(species.at(std::size_t(index)).className);
         slice.value = double(species.at(std::size_t(index)).observations);
-        slice.color = speciesColor((index % 6) + 1);
+        slice.color = speciesColorForName(slice.name, index);
         slices.push_back(std::move(slice));
     }
     m_composition->setSlices(slices);
@@ -339,7 +344,7 @@ void AnalyticsPage::setObservations(
     for (int row = 0; row < int(species.size()); ++row) {
         const auto& stats = species.at(std::size_t(row));
         auto* name = new QTableWidgetItem(QString::fromStdString(stats.className));
-        name->setForeground(speciesColor((row % 6) + 1));
+        name->setForeground(speciesColorForName(name->text(), row));
         m_speciesTable->setItem(row, 0, name);
         m_speciesTable->setItem(
             row, 1, new QTableWidgetItem(QLocale::system().toString(qlonglong(stats.observations))));

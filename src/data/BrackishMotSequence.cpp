@@ -57,8 +57,11 @@ bool BrackishMotSequence::load(const QString& directory, QString* error)
         }
         bool ok = false;
         const int frame = fields[0].toInt(&ok);
-        if (!ok)
+        if (!ok) {
+            if (error)
+                *error = QStringLiteral("Invalid frame number at line %1.").arg(lineNumber);
             return false;
+        }
         GroundTruth annotation;
         annotation.frame = frame;
         annotation.trackId = fields[1].toInt();
@@ -104,6 +107,16 @@ QString BrackishMotSequence::className(int classId)
         QStringLiteral("Shrimp"), QStringLiteral("Starfish"),
         QStringLiteral("Small fish"), QStringLiteral("Jellyfish")};
     return classId >= 1 && classId < names.size() ? names[classId] : QStringLiteral("Unknown");
+}
+
+int BrackishMotSequence::classIdForName(const QString& name)
+{
+    // Case-insensitive: YOLO manifests spell the same classes "crab",
+    // "small fish", and should share their colours and filters.
+    for (int classId = 1; classId <= 6; ++classId)
+        if (className(classId).compare(name.trimmed(), Qt::CaseInsensitive) == 0)
+            return classId;
+    return 0;
 }
 
 }  // namespace aquatrack

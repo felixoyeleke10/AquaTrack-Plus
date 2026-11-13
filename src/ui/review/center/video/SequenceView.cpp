@@ -3,6 +3,7 @@
 #include "ui/AppTheme.h"
 
 #include <QFontMetrics>
+#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -29,7 +30,7 @@ QString formatClock(qint64 milliseconds)
 void drawPlate(QPainter& painter, const QRectF& box)
 {
     painter.setPen(QPen(QColor(255, 255, 255, 28), 1.0));
-    painter.setBrush(QColor(6, 16, 28, 205));
+    painter.setBrush(QColor(8, 10, 15, 214));
     painter.drawRoundedRect(box, 7, 7);
 }
 
@@ -41,8 +42,10 @@ SequenceView::SequenceView(QWidget* parent) : QWidget(parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
-void SequenceView::setFrame(QImage image, QVector<aquatrack::GroundTruth> annotations)
+void SequenceView::setFrame(QImage image, QVector<aquatrack::GroundTruth> annotations,
+                            QSize sourceSize)
 {
+    m_sourceSize = sourceSize.isValid() ? sourceSize : image.size();
     m_image = std::move(image);
     m_annotations = std::move(annotations);
     update();
@@ -71,6 +74,7 @@ void SequenceView::setTrails(QHash<int, QVector<QPointF>> trails)
 void SequenceView::clear()
 {
     m_image = QImage();
+    m_sourceSize = QSize();
     m_annotations.clear();
     m_trails.clear();
     m_frame = m_total = 0;
@@ -80,7 +84,7 @@ void SequenceView::clear()
 
 bool SequenceView::passes(const aquatrack::GroundTruth& annotation) const
 {
-    if (m_overlays.speciesClassId != 0 && annotation.classId != m_overlays.speciesClassId)
+    if (m_overlays.speciesClassId >= 0 && annotation.classId != m_overlays.speciesClassId)
         return false;
     return double(annotation.confidence) >= m_overlays.minConfidence;
 }
@@ -102,7 +106,7 @@ void SequenceView::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
     // Letterbox background.
-    painter.fillRect(rect(), QColor(0x05, 0x0f, 0x1b));
+    painter.fillRect(rect(), QColor(0x02, 0x03, 0x05));
 
     if (m_image.isNull()) {
         painter.setPen(palette::TextDim);
@@ -110,17 +114,21 @@ void SequenceView::paintEvent(QPaintEvent* event)
         font.setPointSizeF(10.0);
         painter.setFont(font);
         painter.drawText(rect(), Qt::AlignCenter,
-                         QStringLiteral("Open a BrackishMOT sequence to begin review"));
+                         QStringLiteral("Open a sequence or video to begin review"));
         return;
     }
 
-    const QSize scaled = m_image.size().scaled(size(), Qt::KeepAspectRatio);
+    const QSize scaled = (m_sourceSize.isValid() ? m_sourceSize : m_image.size())
+                             .scaled(size(), Qt::KeepAspectRatio);
     const QRect target((width() - scaled.width()) / 2, (height() - scaled.height()) / 2,
                        scaled.width(), scaled.height());
     painter.drawImage(target, m_image);
 
-    const qreal scaleX = qreal(target.width()) / m_image.width();
-    const qreal scaleY = qreal(target.height()) / m_image.height();
+    // Annotations are in source pixels, which differ from the decoded image's
+    // when a large video was scaled down for display.
+    const QSize space = m_sourceSize.isValid() ? m_sourceSize : m_image.size();
+    const qreal scaleX = qreal(target.width()) / space.width();
+    const qreal scaleY = qreal(target.height()) / space.height();
     const auto toView = [&](const QPointF& point) {
         return QPointF(target.x() + point.x() * scaleX, target.y() + point.y() * scaleY);
     };
@@ -155,7 +163,14 @@ void SequenceView::paintEvent(QPaintEvent* event)
     painter.setFont(labelFont);
     const QFontMetrics metrics(labelFont);
 
-    QVector<QPair<QString, QColor>> legend;
+    // Species on screen and how many of each. Their colour only means
+    // something when boxes are coloured by species (track colours off).
+    struct LegendEntry {
+        QString name;
+        QColor colour;
+        int count = 0;
+    };
+    QVector<LegendEntry> legend;
     for (const auto& annotation : m_annotations) {
         if (!passes(annotation))
             continue;
@@ -180,7 +195,7 @@ void SequenceView::paintEvent(QPaintEvent* event)
         }
 
         if (m_overlays.showIds) {
-            const QString text = QStringLiteral("ID: %1").arg(annotation.trackId);
+            const QString text = QStringLiteral("ID %1").arg(annotation.trackId);
             QRectF plate(box.left(), box.top() - metrics.height() - 5,
                          metrics.horizontalAdvance(text) + 12, metrics.height() + 4);
             if (plate.top() < target.top())
@@ -188,15 +203,17 @@ void SequenceView::paintEvent(QPaintEvent* event)
             painter.setPen(Qt::NoPen);
             painter.setBrush(colour);
             painter.drawRoundedRect(plate, 3, 3);
-            painter.setPen(QColor(8, 18, 30));
+            painter.setPen(QColor(6, 8, 12));
             painter.drawText(plate, Qt::AlignCenter, text);
         }
 
         const QString species = aquatrack::BrackishMotSequence::className(annotation.classId);
-        const auto known = std::find_if(legend.cbegin(), legend.cend(),
-                                        [&](const auto& item) { return item.first == species; });
-        if (known == legend.cend())
-            legend.push_back({species, speciesColor(annotation.classId)});
+        const auto known = std::find_if(legend.begin(), legend.end(),
+                                        [&](const auto& item) { return item.name == species; });
+        if (known == legend.end())
+            legend.push_back({species, speciesColor(annotation.classId), 1});
+        else
+            ++known->count;
     }
 
     // ---- Frame and time plate, top left -------------------------------
@@ -207,9 +224,10 @@ void SequenceView::paintEvent(QPaintEvent* event)
     const QFontMetrics plateMetrics(plateFont);
 
     if (m_total > 0) {
-        const QString frameText =
-            QStringLiteral("Frame: %1 / %2").arg(m_frame).arg(m_total);
-        const QString timeText = QStringLiteral("Time: %1").arg(formatClock(m_timeMs));
+        const QLocale locale = QLocale::system();
+        const QString frameText = QStringLiteral("Frame %1 of %2")
+                                      .arg(locale.toString(m_frame), locale.toString(m_total));
+        const QString timeText = formatClock(m_timeMs);
         const int textWidth = std::max(plateMetrics.horizontalAdvance(frameText),
                                        plateMetrics.horizontalAdvance(timeText));
         const QRectF plate(target.left() + 10, target.top() + 10, textWidth + 20,
@@ -224,9 +242,11 @@ void SequenceView::paintEvent(QPaintEvent* event)
     // ---- Species legend, top right ------------------------------------
     if (!legend.isEmpty()) {
         const QString heading = QStringLiteral("Species in frame");
+        const bool dots = !m_overlays.showTracks;
         int widest = plateMetrics.horizontalAdvance(heading);
-        for (const auto& [name, colour] : legend)
-            widest = std::max(widest, plateMetrics.horizontalAdvance(name) + 16);
+        for (const auto& entry : legend)
+            widest = std::max(widest, plateMetrics.horizontalAdvance(entry.name) + (dots ? 16 : 0) +
+                                          plateMetrics.horizontalAdvance(QString::number(entry.count)) + 14);
         const qreal rowHeight = plateMetrics.height() + 3;
         const QRectF plate(target.right() - widest - 26, target.top() + 10, widest + 24,
                            rowHeight * (legend.size() + 1) + 12);
@@ -236,13 +256,19 @@ void SequenceView::paintEvent(QPaintEvent* event)
         painter.drawText(QRectF(plate.left() + 11, plate.top() + 5, plate.width() - 22, rowHeight),
                          Qt::AlignLeft | Qt::AlignVCenter, heading);
         qreal y = plate.top() + 5 + rowHeight;
-        for (const auto& [name, colour] : legend) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(colour);
-            painter.drawEllipse(QRectF(plate.left() + 11, y + rowHeight / 2 - 3.5, 7, 7));
+        for (const auto& entry : legend) {
+            qreal left = plate.left() + 11;
+            if (dots) {
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(entry.colour);
+                painter.drawEllipse(QRectF(left, y + rowHeight / 2 - 3.5, 7, 7));
+                left += 14;
+            }
+            const QRectF row(left, y, plate.right() - 11 - left, rowHeight);
             painter.setPen(palette::TextPrimary);
-            painter.drawText(QRectF(plate.left() + 25, y, plate.width() - 34, rowHeight),
-                             Qt::AlignLeft | Qt::AlignVCenter, name);
+            painter.drawText(row, Qt::AlignLeft | Qt::AlignVCenter, entry.name);
+            painter.setPen(palette::TextSecondary);
+            painter.drawText(row, Qt::AlignRight | Qt::AlignVCenter, QString::number(entry.count));
             y += rowHeight;
         }
     }

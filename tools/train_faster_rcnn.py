@@ -25,8 +25,8 @@ from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 
-from aquatrack.benchmark import count_matches, save_detector_metrics  # noqa: E402
-from aquatrack.torchvision_detection import (  # noqa: E402
+from aquatrack.benchmark import count_matches, save_detector_metrics
+from aquatrack.torchvision_detection import (
     YoloFormatDetectionDataset,
     collate_fn,
     ensure_finite_loss,

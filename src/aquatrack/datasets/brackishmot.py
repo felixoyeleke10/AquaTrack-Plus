@@ -6,12 +6,11 @@ import os
 import random
 import shutil
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import yaml
-
 
 BRACKISHMOT_CLASSES = {
     1: "fish",

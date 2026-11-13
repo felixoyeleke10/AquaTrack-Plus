@@ -2,78 +2,151 @@
 
 #include <QTimer>
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace aquatrack::application {
 
 ReviewController::ReviewController(QObject *parent)
-    : QObject(parent), m_timer(new QTimer(this)) {
-  connect(m_timer, &QTimer::timeout, this, [this] {
-    if (m_frame >= m_sequence.frameCount()) {
-      m_timer->stop();
-      emit playbackChanged(false);
-      return;
-    }
-    setFrame(m_frame + 1);
+    : QObject(parent), m_decoder(new media::FrameDecoder(this)),
+      m_pacer(new QTimer(this)) {
+  m_pacer->setSingleShot(true);
+  m_pacer->setTimerType(Qt::PreciseTimer);
+  connect(m_pacer, &QTimer::timeout, this, [this] {
+    if (m_playing)
+      requestFrame(m_frame + 1);
   });
+  connect(m_decoder, &media::FrameDecoder::frameDecoded, this,
+          &ReviewController::onDecoded);
+  connect(m_decoder, &media::FrameDecoder::frameFailed, this,
+          &ReviewController::onFailed);
 }
 
-void ReviewController::loadSequence(const QString &directory) {
+ReviewController::~ReviewController() = default;
+
+bool ReviewController::loadSequence(const QString &path) {
+  media::MediaSource opened;
   QString error;
-  if (!m_sequence.load(directory, &error)) {
+  if (!opened.open(path, &error)) {
     emit errorOccurred(error);
-    return;
+    return false;
   }
-  m_timer->stop();
-  m_timer->setInterval(qMax(1, 1000 / m_sequence.frameRate()));
-  emit playbackChanged(false);
-  emit sequenceLoaded(m_sequence.name(), m_sequence.frameCount(),
-                      m_sequence.frameRate(), m_sequence.imageWidth(),
-                      m_sequence.imageHeight());
+  stopPlayback();
+  m_source = std::move(opened);
+  m_decoder->setSource(m_source);
+  m_frame = 0;
+  m_inFlight = 0;
+  emit sequenceLoaded(m_source.name(), m_source.frameCount(),
+                      std::max(1, int(std::lround(m_source.frameRate()))),
+                      m_source.frameSize().width(),
+                      m_source.frameSize().height());
   setFrame(1);
+  return true;
 }
 
-void ReviewController::setFrame(int frame) {
-  if (!m_sequence.isLoaded() || frame < 1 || frame > m_sequence.frameCount())
+bool ReviewController::setFrame(int frame) {
+  if (!isLoaded() || frame < 1 || frame > m_source.frameCount())
+    return false;
+  requestFrame(frame);
+  return true;
+}
+
+void ReviewController::requestFrame(int frame) {
+  m_inFlight = frame;
+  m_decoder->request(frame);
+}
+
+void ReviewController::onDecoded(quint64 generation, int frame,
+                                 const QImage &image) {
+  if (generation != m_decoder->generation())
     return;
-  QImage image(m_sequence.imagePath(frame));
-  if (image.isNull()) {
-    emit errorOccurred(QStringLiteral("Could not read frame %1").arg(frame));
+  if (frame == m_inFlight)
+    m_inFlight = 0;
+  m_frame = frame;
+  m_lastShown.restart();
+  emit frameReady(image, m_source.groundTruth(frame), frame,
+                  m_source.frameCount());
+  if (m_playing && m_inFlight == 0)
+    scheduleNext();
+}
+
+void ReviewController::onFailed(quint64 generation, int frame,
+                                const QString &error) {
+  if (generation != m_decoder->generation())
+    return;
+  if (frame == m_inFlight)
+    m_inFlight = 0;
+  // Stop before reporting: the error is shown in a modal dialog, and
+  // playback must not keep asking for the same unreadable frame meanwhile.
+  stopPlayback();
+  emit errorOccurred(error);
+}
+
+void ReviewController::scheduleNext() {
+  if (m_frame >= m_source.frameCount()) {
+    stopPlayback();
     return;
   }
-  m_frame = frame;
-  emit frameReady(std::move(image), m_sequence.annotations(frame), frame,
-                  m_sequence.frameCount());
+  // Pace by the clip's own rate, counting the time the frame took to arrive
+  // and be shown, so slow decoding lowers the frame rate instead of piling
+  // up requests.
+  const int interval = m_source.frameIntervalMs(m_frame + 1);
+  const qint64 spent = m_lastShown.isValid() ? m_lastShown.elapsed() : 0;
+  m_pacer->start(int(std::max<qint64>(0, interval - spent)));
 }
 
 void ReviewController::togglePlayback() {
-  if (!m_sequence.isLoaded())
+  if (!isLoaded())
     return;
-  if (m_timer->isActive()) {
-    m_timer->stop();
-    emit playbackChanged(false);
+  if (m_playing) {
+    stopPlayback();
     return;
   }
-  if (m_frame >= m_sequence.frameCount())
-    setFrame(1);
-  m_timer->start();
+  m_playing = true;
   emit playbackChanged(true);
+  if (m_inFlight != 0)
+    return; // the frame on its way starts the clock
+  if (m_frame >= m_source.frameCount())
+    requestFrame(1);
+  else
+    requestFrame(m_frame + 1);
+}
+
+void ReviewController::stopPlayback() {
+  m_pacer->stop();
+  if (!m_playing)
+    return;
+  m_playing = false;
+  emit playbackChanged(false);
+}
+
+void ReviewController::close() {
+  stopPlayback();
+  m_source = media::MediaSource();
+  m_decoder->clear();
+  m_frame = 0;
+  m_inFlight = 0;
+}
+
+void ReviewController::setDecoderCacheSize(int frames) {
+  m_decoder->setCacheSize(frames);
 }
 
 std::vector<domain::Observation> ReviewController::observations() const {
   std::vector<domain::Observation> result;
-  if (!m_sequence.isLoaded())
+  if (m_source.kind() != media::MediaKind::ImageSequence)
     return result;
-  const auto videoId = m_sequence.name().toStdString();
-  for (int frame = 1; frame <= m_sequence.frameCount(); ++frame) {
-    for (const auto &truth : m_sequence.annotations(frame)) {
+  const auto &sequence = m_source.imageSequence();
+  const auto videoId = sequence.name().toStdString();
+  for (int frame = 1; frame <= sequence.frameCount(); ++frame) {
+    for (const auto &truth : sequence.annotations(frame)) {
       domain::Observation observation;
       observation.id = videoId + ":" + std::to_string(frame) + ":" +
                        std::to_string(truth.trackId);
       observation.videoId = videoId;
       observation.frameIndex = frame;
-      observation.timestampMs = static_cast<domain::TimestampMs>(frame - 1) *
-                                1000 / m_sequence.frameRate();
+      observation.timestampMs = m_source.timestampMs(frame);
       observation.localTrackId = truth.trackId;
       observation.box = {static_cast<float>(truth.box.left()),
                          static_cast<float>(truth.box.top()),
@@ -83,6 +156,8 @@ std::vector<domain::Observation> ReviewController::observations() const {
           BrackishMotSequence::className(truth.classId).toStdString();
       observation.confidence = truth.confidence;
       observation.humanVerified = true;
+      if (!domain::isValid(observation))
+        continue;
       result.push_back(std::move(observation));
     }
   }

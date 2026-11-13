@@ -30,6 +30,11 @@ bool isValid(const AquaTrackSettings &s, std::string *reason) {
     return fail("theme must be dark, light, or system");
   if (s.appearance.interfaceScale < 0.75 || s.appearance.interfaceScale > 2.0)
     return fail("interface scale must be between 0.75 and 2.0");
+  if (s.analysis.tracker != "bytetrack" && s.analysis.tracker != "iou")
+    return fail("tracker must be bytetrack or iou");
+  if (s.storage.mediaImport != "ask" && s.storage.mediaImport != "copy" &&
+      s.storage.mediaImport != "link")
+    return fail("media import must be ask, copy, or link");
   if (s.storage.recentProjects.size() > MaxRecentProjects)
     return fail("too many recent projects");
   return true;

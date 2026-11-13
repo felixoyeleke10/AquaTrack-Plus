@@ -7,10 +7,10 @@
 
 class QPainter;
 
-// A small stroked icon set drawn with QPainter on a 24x24 grid. The project
-// ships no icon assets and pulling in an icon font would mean shipping a
-// binary the build cannot verify, so the handful of glyphs the shell needs
-// are drawn in code.
+// The application's icon set: Lucide (https://lucide.dev, ISC licence), a
+// stroked 24x24 family. The artwork is embedded as SVG text by
+// tools/generate_glyph_artwork.py, so the build ships no binary assets and
+// the colour and stroke weight are chosen at render time.
 namespace aquatrack::ui {
 
 enum class Glyph {
@@ -32,6 +32,7 @@ enum class Glyph {
     More,
     Play,
     Pause,
+    Previous,
     Next,
     Volume,
     Fullscreen,
@@ -54,9 +55,20 @@ enum class Glyph {
     Save,
     Export,
     Drop,
+    // Window caption controls.
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+    // View modes and inspection.
+    ListView,
+    GridView,
+    Inspect,
 };
 
 // Paints the glyph centred in the given square, stroked in `color`.
+// `strokeWidth` is in device-independent pixels, so the line weight is the
+// same at every icon size.
 void paintGlyph(QPainter& painter, Glyph glyph, const QRectF& box, const QColor& color,
                 qreal strokeWidth = 1.6);
 

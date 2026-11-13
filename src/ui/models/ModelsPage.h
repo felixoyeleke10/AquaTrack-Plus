@@ -33,6 +33,9 @@ public:
 
 signals:
     void scanRequested();
+    // Bring trained models into the project's models folder.
+    void importRunsRequested();
+    void importWeightsRequested();
     void refreshRequested();
     void activeDetectorRequested(QString modelId);
 
@@ -43,6 +46,9 @@ private:
 
     QVector<aquatrack::data::ModelEntry> m_entries;
     QVector<int> m_visible;  // row -> index into m_entries
+    // Selection captured before the backing list is replaced. m_visible maps
+    // rows into the *old* list, so it must not be read once the list changes.
+    QString m_pendingSelection;
     QString m_activeDetector;
 
     QLabel* m_rootLabel = nullptr;

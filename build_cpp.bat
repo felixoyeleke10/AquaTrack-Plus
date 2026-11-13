@@ -25,8 +25,29 @@ if not exist "%QT_DIR%\bin\windeployqt.exe" (
     exit /b 1
 )
 
+rem Windows locks a running exe, so linking over it fails with LNK1168 (an
+rem open window, or a leftover instance with no window). A running exe can
+rem still be renamed, so move it aside and build a fresh one; the old copy
+rem is deleted on a later build once nothing uses it.
+del /q "%BUILD_DIR%\AquaTrack.in-use-*.exe" >nul 2>&1
+set "AQUATRACK_EXE=%CD%\%BUILD_DIR%\AquaTrack.exe"
+powershell -NoProfile -Command "$exe=$env:AQUATRACK_EXE; if (Get-Process AquaTrack -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }) { exit 1 }"
+if errorlevel 1 (
+    ren "%BUILD_DIR%\AquaTrack.exe" "AquaTrack.in-use-%RANDOM%.exe"
+    if errorlevel 1 (
+        echo AquaTrack is running from %BUILD_DIR%\AquaTrack.exe and could not be moved aside.
+        echo Close it ^(Task Manager, AquaTrack.exe, End task^) and run this again.
+        exit /b 1
+    )
+    echo Note: an older AquaTrack is still running; building a new copy alongside it.
+)
+
 call "%VCVARS%" >nul 2>&1
-cmake -S . -B "%BUILD_DIR%" -G "Ninja" -DCMAKE_PREFIX_PATH="%QT_DIR%" -DCMAKE_BUILD_TYPE=Debug
+rem The app is built optimised (Release): a Debug build with Qt's debug
+rem libraries is roughly ten times slower, which shows up as seconds-long
+rem pauses opening a project. test_cpp.bat sets BUILD_TYPE=Debug for tests.
+if not defined BUILD_TYPE set "BUILD_TYPE=Release"
+cmake -S . -B "%BUILD_DIR%" -G "Ninja" -DCMAKE_PREFIX_PATH="%QT_DIR%" -DCMAKE_BUILD_TYPE=%BUILD_TYPE%
 if errorlevel 1 exit /b 1
 cmake --build "%BUILD_DIR%" --parallel 2
 if errorlevel 1 exit /b 1

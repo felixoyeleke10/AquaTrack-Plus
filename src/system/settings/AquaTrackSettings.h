@@ -25,7 +25,9 @@ struct PipelineSettings {
 };
 struct StorageSettings {
   std::string defaultProjectDirectory;
-  bool useExternalMediaReferences = true;
+  // What adding media to a project does: "ask" each time, "copy" it into
+  // the project's media folder, or "link" to it where it is.
+  std::string mediaImport = "ask";
   // Most recent first. Capped so the settings file cannot grow without bound.
   std::vector<std::string> recentProjects;
 };
@@ -33,6 +35,12 @@ inline constexpr std::size_t MaxRecentProjects = 10;
 struct ExportSettings {
   bool includeConfidence = true;
   bool includeUnverified = true;
+};
+// How "Detect & track" runs. An empty interpreter means auto-detect (the
+// checkout's .venv, then python on PATH).
+struct AnalysisSettings {
+  std::string pythonExecutable;
+  std::string tracker = "bytetrack"; // or "iou"
 };
 struct AppearanceSettings {
   std::string theme = "dark";
@@ -45,6 +53,7 @@ struct AquaTrackSettings {
   PipelineSettings pipeline;
   StorageSettings storage;
   ExportSettings exportSettings;
+  AnalysisSettings analysis;
   AppearanceSettings appearance;
 };
 [[nodiscard]] bool isValid(const AquaTrackSettings &,

@@ -2,6 +2,8 @@
 #include "data/catalog/DatasetCatalog.h"
 
 #include <QDir>
+
+#include <algorithm>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QString>
@@ -43,6 +45,8 @@ int main() {
   aquatrack::data::DatasetCatalog catalog;
   const auto first = catalog.scan(temporary.path());
   requireTest(first.datasets.size() == 2, "discover supported datasets");
+  requireTest(!first.datasets[0].synthetic && !first.datasets[1].synthetic,
+              "survey data is not flagged synthetic");
   requireTest(first.datasets[0].frameCount == 25, "read sequence frame count");
   requireTest(first.datasets[0].hasAnnotations, "annotation availability");
   requireTest(!first.datasets[0].id.isEmpty(), "stable dataset identity");
@@ -69,5 +73,18 @@ int main() {
   requireTest(yolo.imageCount == 4 && yolo.annotationCount == 4, "YOLO split counted");
   requireTest(yolo.frameCount == 4, "YOLO frame count reflects images");
   requireTest(!yolo.isReviewable(), "YOLO datasets are not review targets");
+  // A sequence under a brackishMOTSynth-style folder is synthetic.
+  requireTest(root.mkpath(QStringLiteral("archive/brackishMOTSynth_B/train/synth-01/gt")),
+              "synthetic directories");
+  writeFile(root.filePath(QStringLiteral("archive/brackishMOTSynth_B/train/synth-01/seqinfo.ini")),
+            "[Sequence]\nname=synth-01\nseqLength=5\n");
+  writeFile(root.filePath(QStringLiteral("archive/brackishMOTSynth_B/train/synth-01/gt/gt.txt")),
+            "1,1,0,0,10,10,1,1,1\n");
+  const auto withSynthetic = catalog.scan(temporary.path());
+  const auto synthetic = std::find_if(
+      withSynthetic.datasets.cbegin(), withSynthetic.datasets.cend(),
+      [](const auto &item) { return item.name == QStringLiteral("synth-01"); });
+  requireTest(synthetic != withSynthetic.datasets.cend() && synthetic->synthetic,
+              "synthetic sequence is flagged");
   return 0;
 }

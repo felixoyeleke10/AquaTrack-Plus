@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import math
+from pathlib import Path
 
 import torch
 from PIL import Image

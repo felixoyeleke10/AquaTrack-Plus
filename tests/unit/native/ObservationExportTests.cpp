@@ -20,7 +20,7 @@ int main() {
   requireTest(csv.find(",101,") != std::string::npos, "global id exported");
   const auto mot =
       aquatrack::exporting::observationsToMotChallenge(observations);
-  requireTest(mot.rfind("5,9,10.000,20.000,30.000,30.000,0.750", 0) == 0,
+  requireTest(mot.rfind("4,9,10.000,20.000,30.000,30.000,0.750", 0) == 0,
               "MOT export");
   return 0;
 }

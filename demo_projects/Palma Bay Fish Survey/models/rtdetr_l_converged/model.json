@@ -1,0 +1,23 @@
+{
+    "artifact": "best.pt",
+    "backend": "ultralytics",
+    "classes": [
+        "fish"
+    ],
+    "id": "rtdetr_l_converged",
+    "input": [
+        640,
+        640
+    ],
+    "metrics": {
+        "map50": 0.3444939257078371,
+        "map50_95": 0.14464127875949678,
+        "precision": 0.4322387830328769,
+        "recall": 0.5921761832575375
+    },
+    "name": "RT-DETR-L (rtdetr_l_converged)",
+    "precision": "fp32",
+    "source": "D:\\Software_and_Web\\softwares\\AquaTrack+\\runs\\fish_detector_benchmark\\rtdetr_l_converged\\weights\\best.pt",
+    "trainedOn": "C:\\Users\\oyele\\AquaTrack_data\\sfishtrack_yolo\\dataset.yaml",
+    "type": "detector"
+}

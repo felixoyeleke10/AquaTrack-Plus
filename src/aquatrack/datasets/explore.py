@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".mts"}
@@ -101,7 +101,11 @@ def looks_like_brackishmot(root: str | Path) -> bool:
 
 
 def explore_brackishmot(root: str | Path) -> dict:
-    from aquatrack.datasets.brackishmot import discover_sequences, parse_annotations, read_sequence_info
+    from aquatrack.datasets.brackishmot import (
+        discover_sequences,
+        parse_annotations,
+        read_sequence_info,
+    )
 
     discovered = discover_sequences(root)
     report: dict = {"kind": "brackishmot", "root": str(Path(root).resolve()), "splits": {}}

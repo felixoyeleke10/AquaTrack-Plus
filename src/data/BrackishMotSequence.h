@@ -28,6 +28,8 @@ public:
     [[nodiscard]] QString imagePath(int frame) const;
     [[nodiscard]] QVector<GroundTruth> annotations(int frame) const;
     [[nodiscard]] static QString className(int classId);
+    // Inverse of className; 0 for anything that is not a BrackishMOT class.
+    [[nodiscard]] static int classIdForName(const QString& name);
 
 private:
     QString m_directory;

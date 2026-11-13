@@ -18,13 +18,16 @@ public:
         bool showDetections = true;
         bool showTracks = true;
         bool showIds = true;
-        int speciesClassId = 0;
+        int speciesClassId = -1;  // -1 = every species
         double minConfidence = 0.0;
     };
 
     explicit SequenceView(QWidget* parent = nullptr);
 
-    void setFrame(QImage image, QVector<aquatrack::GroundTruth> annotations);
+    // `sourceSize` is the pixel space the annotations are in; it differs from
+    // the image's size when a large video was decoded scaled down.
+    void setFrame(QImage image, QVector<aquatrack::GroundTruth> annotations,
+                  QSize sourceSize = {});
     void setOverlays(const Overlays& overlays);
     void setFrameInfo(int frame, int total, qint64 timeMs);
     // Recent centre points per track, in image coordinates, oldest first.
@@ -40,6 +43,7 @@ private:
     [[nodiscard]] bool passes(const aquatrack::GroundTruth& annotation) const;
 
     QImage m_image;
+    QSize m_sourceSize;
     QVector<aquatrack::GroundTruth> m_annotations;
     QHash<int, QVector<QPointF>> m_trails;
     Overlays m_overlays;

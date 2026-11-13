@@ -19,6 +19,13 @@ public:
   [[nodiscard]] bool relabel(const domain::ObservationId &id,
                              std::string className, float confidence);
   [[nodiscard]] bool erase(const domain::ObservationId &id);
+  // Re-labels every observation of `source` from `fromFrame` onward as
+  // `target`, in the open video.
+  [[nodiscard]] bool mergeTracks(domain::LocalTrackId source,
+                                 domain::LocalTrackId target,
+                                 std::int64_t fromFrame = 0);
+  [[nodiscard]] bool hasSession() const { return m_session != nullptr; }
+  [[nodiscard]] const domain::VideoId &videoId() const { return m_videoId; }
   [[nodiscard]] bool undo();
   [[nodiscard]] bool redo();
   [[nodiscard]] bool save(QString *error = nullptr);

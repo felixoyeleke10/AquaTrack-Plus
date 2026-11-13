@@ -42,7 +42,8 @@ observationsToMotChallenge(std::span<const domain::Observation> observations) {
   std::ostringstream output;
   output << std::fixed << std::setprecision(3);
   for (const auto &item : observations)
-    output << item.frameIndex + 1 << ',' << item.localTrackId << ','
+    // frameIndex is already the 1-based MOT frame number.
+    output << item.frameIndex << ',' << item.localTrackId << ','
            << item.box.x1 << ',' << item.box.y1 << ',' << item.box.width()
            << ',' << item.box.height() << ',' << item.confidence
            << ",-1,-1,-1\n";

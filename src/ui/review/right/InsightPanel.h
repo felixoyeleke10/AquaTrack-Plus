@@ -17,20 +17,16 @@ class QVBoxLayout;
 namespace aquatrack::ui {
 class Badge;
 class LineChart;
-class MetricTile;
-class Sparkline;
 }
 
-// Right rail: what the loaded sequence adds up to, what looks wrong in it,
-// and the controls for correcting the frame currently under review.
+// Right rail: what looks wrong in the sequence, and the controls for
+// correcting the frame under review. Totals live in the left rail.
 class InsightPanel final : public QFrame {
     Q_OBJECT
 
 public:
     explicit InsightPanel(QWidget* parent = nullptr);
 
-    void setSummary(const aquatrack::analytics::SurveySummary& summary,
-                    std::size_t peakConcurrent);
     void setEvents(const std::vector<aquatrack::analytics::SurveyEvent>& events);
     void setIdSwitch(const std::optional<aquatrack::analytics::IdSwitchCandidate>& candidate,
                      int remaining);
@@ -46,32 +42,34 @@ signals:
     void redoRequested();
     void saveRequested();
     void mergeTracksRequested(qint64 source, qint64 target);
-    void frameRequested(int frame);
+    // A moment in the sequence, as a timestamp in milliseconds.
+    void frameRequested(int timestampMs);
+    // "All N events": show the full list.
+    void allEventsRequested();
 
 private:
     [[nodiscard]] QString selectedObservationId() const;
 
-    aquatrack::ui::MetricTile* m_observationTile = nullptr;
-    aquatrack::ui::MetricTile* m_trackTile = nullptr;
-    aquatrack::ui::MetricTile* m_peakTile = nullptr;
-    QLabel* m_dominantSpecies = nullptr;
-
     QVBoxLayout* m_eventList = nullptr;
     QLabel* m_eventEmpty = nullptr;
+    QPushButton* m_allEvents = nullptr;
+    QLabel* m_eventCount = nullptr;
 
     QFrame* m_switchCard = nullptr;
     QLabel* m_switchSummary = nullptr;
+    QLabel* m_switchAt = nullptr;
     QLabel* m_switchGap = nullptr;
     QLabel* m_switchSimilarity = nullptr;
     QLabel* m_switchRemaining = nullptr;
-    aquatrack::ui::Sparkline* m_switchSparkline = nullptr;
     aquatrack::ui::Badge* m_switchBadge = nullptr;
     QPushButton* m_merge = nullptr;
     QPushButton* m_reviewClip = nullptr;
 
     aquatrack::ui::LineChart* m_confidenceChart = nullptr;
 
+    QLabel* m_frameCount = nullptr;
     QListWidget* m_observations = nullptr;
+    QLabel* m_observationsEmpty = nullptr;
     QLabel* m_editHint = nullptr;
     QPushButton* m_relabel = nullptr;
     QPushButton* m_delete = nullptr;

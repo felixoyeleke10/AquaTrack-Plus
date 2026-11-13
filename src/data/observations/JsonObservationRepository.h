@@ -23,6 +23,10 @@ public:
   [[nodiscard]] std::vector<domain::Observation>
   observationsForVideo(const domain::VideoId &id) const override;
   [[nodiscard]] bool containsVideo(const domain::VideoId &id) const override;
+  // Forgets a video entirely: its observations and the record that it was
+  // reviewed (unlike replacing with nothing, which keeps "reviewed, none
+  // found"). Used when media is renamed and its annotations move.
+  bool removeVideo(const domain::VideoId &id, std::string &error);
 
 private:
   [[nodiscard]] bool persist(std::string &error) const;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from time import perf_counter
 
@@ -43,7 +44,7 @@ def _draw(frame, tracks: list[Track], counter: LineCounter, config: AppConfig) -
                     0.5, color, 2, cv2.LINE_AA)
         if config.output.draw_track_trail:
             trail = track.trail[-config.output.trail_length :]
-            for start, end in zip(trail, trail[1:]):
+            for start, end in pairwise(trail):
                 cv2.line(frame, tuple(map(int, start)), tuple(map(int, end)), color, 2)
     cv2.putText(frame, f"Crossings: {counter.total}", (16, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 255), 2, cv2.LINE_AA)

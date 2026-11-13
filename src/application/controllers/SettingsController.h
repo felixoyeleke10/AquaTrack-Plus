@@ -16,6 +16,11 @@ Q_OBJECT public
   // trimming, then persists. Failing to record a recent entry must never
   // block the project operation that triggered it, so this returns void.
   void rememberRecentProject(const QString &path);
+  // Drops one entry from the recent list. Returns false if it was not there.
+  bool forgetRecentProject(const QString &path);
+  // Drops every entry whose file no longer exists; returns how many went.
+  // Never automatic: a project on an unplugged drive is still a project.
+  int forgetMissingRecentProjects();
 signals:
   void settingsChanged();
 

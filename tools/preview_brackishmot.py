@@ -12,7 +12,6 @@ from aquatrack.datasets.brackishmot import (
     read_sequence_info,
 )
 
-
 COLORS = {
     1: (55, 210, 80),
     2: (255, 170, 50),

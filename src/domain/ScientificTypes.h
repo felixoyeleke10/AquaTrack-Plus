@@ -39,6 +39,8 @@ struct Observation {
     ObservationId id;
     VideoId videoId;
     TimestampMs timestampMs = 0;
+    // 1-based frame number, as in MOTChallenge files and on-disk image names
+    // (frame 1 is 000001.jpg). Exporters write it unchanged.
     std::int64_t frameIndex = 0;
     LocalTrackId localTrackId = 0;
     std::optional<GlobalTrackId> globalTrackId;

@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTableWidget>
@@ -22,6 +23,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 using namespace aquatrack::ui;
 namespace models = aquatrack::models;
@@ -138,10 +140,25 @@ ModelsPage::ModelsPage(QWidget* parent) : QWidget(parent)
     connect(m_refresh, &QPushButton::clicked, this, &ModelsPage::refreshRequested);
     head->addWidget(m_refresh, 0, Qt::AlignBottom);
 
-    auto* scan = textButton(QStringLiteral("Scan registry"), this, "primary");
-    scan->setIcon(glyphIcon(Glyph::Datasets, 15, Qt::white, Qt::white));
+    auto* scan = textButton(QStringLiteral("Open registry..."), this);
+    scan->setIcon(glyphIcon(Glyph::Files, 15, palette::TextSecondary, palette::TextPrimary));
+    scan->setToolTip(QStringLiteral("Browse a folder of model.json manifests elsewhere"));
     connect(scan, &QPushButton::clicked, this, &ModelsPage::scanRequested);
     head->addWidget(scan, 0, Qt::AlignBottom);
+
+    // The usual way in: import trained weights, which writes the manifest.
+    auto* import = textButton(QStringLiteral("Import models"), this, "primary");
+    import->setObjectName(QStringLiteral("importModelsMenu"));
+    import->setIcon(glyphIcon(Glyph::Export, 15, Qt::white, Qt::white));
+    auto* importMenu = new QMenu(import);
+    importMenu->addAction(QStringLiteral("From training runs..."), this,
+                          &ModelsPage::importRunsRequested);
+    importMenu->addAction(QStringLiteral("Weights file (.pt, .onnx)..."), this,
+                          &ModelsPage::importWeightsRequested);
+    connect(import, &QPushButton::clicked, this, [import, importMenu] {
+        importMenu->exec(import->mapToGlobal(QPoint(0, import->height() + 4)));
+    });
+    head->addWidget(import, 0, Qt::AlignBottom);
     page->addLayout(head);
 
     // ---- Filters -------------------------------------------------------
@@ -238,11 +255,7 @@ ModelsPage::ModelsPage(QWidget* parent) : QWidget(parent)
     detailColumn->setContentsMargins(14, 13, 14, 14);
     detailColumn->setSpacing(10);
 
-    m_detailEmpty = typedLabel(
-        QStringLiteral("Select a model to see its backend, input size, classes, metrics and "
-                       "artifact.\n\nA registry is any folder tree containing model.json files. "
-                       "Each one needs id, name, type, backend, input and artifact."),
-        "dim", detailHost);
+    m_detailEmpty = typedLabel(QString(), "dim", detailHost);
     m_detailEmpty->setWordWrap(true);
     detailColumn->addWidget(m_detailEmpty);
 
@@ -324,6 +337,9 @@ ModelsPage::ModelsPage(QWidget* parent) : QWidget(parent)
 void ModelsPage::setRegistry(const QString& root, const QVector<aquatrack::data::ModelEntry>& entries,
                              const QStringList& warnings)
 {
+    if (const auto* current = selectedEntry())
+        m_pendingSelection = QString::fromStdString(current->manifest.id);
+    m_visible.clear();
     m_entries = entries;
     m_rootLabel->setText(root.isEmpty() ? QStringLiteral("No registry open") : root);
     m_refresh->setEnabled(!root.isEmpty());
@@ -356,8 +372,8 @@ void ModelsPage::applyFilter()
 
     // Refreshing or filtering should not throw away what the operator was
     // looking at, so remember it by id and restore it afterwards.
-    QString previousId;
-    if (const auto* current = selectedEntry())
+    QString previousId = std::exchange(m_pendingSelection, QString());
+    if (const auto* current = selectedEntry(); previousId.isEmpty() && current)
         previousId = QString::fromStdString(current->manifest.id);
 
     m_visible.clear();
@@ -407,6 +423,16 @@ void ModelsPage::applyFilter()
         m_table->setItem(row, 5, artifact);
     }
 
+    // Say how to fill an empty registry rather than only that it is empty.
+    m_detailEmpty->setText(
+        m_entries.isEmpty()
+            ? QStringLiteral("No models here yet.\n\nUse Import models to bring in trained "
+                             "weights: point it at a training runs folder (such as runs\\) and "
+                             "pick the runs you want, or choose a single .pt or .onnx file. "
+                             "Each model is copied into the project's models folder with a "
+                             "model.json describing it.")
+            : QStringLiteral("Select a model to see its backend, input size, classes, metrics "
+                             "and artifact."));
     if (m_entries.isEmpty())
         m_summary->setText(QStringLiteral("No models found"));
     else
