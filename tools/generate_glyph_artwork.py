@@ -1,14 +1,15 @@
-"""Regenerate src/ui/common/GlyphArtwork.cpp from a Lucide icon set.
+"""Regenerate src/ui/common/GlyphArtwork.cpp from the Phosphor icon set.
 
-The desktop app draws its icons from Lucide (https://lucide.dev, ISC licence).
-Rather than shipping SVG files as a Qt resource, the inner markup of each icon
-is embedded as text so the build stays free of binary assets and every glyph
-is reviewable in a diff.
+The desktop app draws its icons from Phosphor (https://phosphoricons.com,
+MIT licence): the regular weight for everyday icons and the duotone weight
+for active and feature icons. Rather than shipping SVG files as a Qt
+resource, the inner markup of each icon is embedded as text so the build
+stays free of binary assets and every glyph is reviewable in a diff.
 
 Usage:
-    npm pack lucide-static@<version>      # or download the tarball
-    tar -xzf lucide-static-<version>.tgz
-    python tools/generate_glyph_artwork.py package/icons --version <version>
+    npm pack @phosphor-icons/core@<version>      # or download the tarball
+    tar -xzf phosphor-icons-core-<version>.tgz
+    python tools/generate_glyph_artwork.py package/assets --version <version>
 """
 
 from __future__ import annotations
@@ -20,57 +21,60 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "src" / "ui" / "common" / "GlyphArtwork.cpp"
 
-# Glyph enumerator -> Lucide icon name. Order follows enum class Glyph.
+# Glyph enumerator -> Phosphor icon name. Order follows enum class Glyph.
 GLYPHS: list[tuple[str, str]] = [
-    ("Dashboard", "layout-dashboard"),
-    ("Video", "video"),
-    ("Review", "scan-eye"),
-    ("Analytics", "chart-column"),
+    ("Dashboard", "squares-four"),
+    ("Video", "video-camera"),
+    ("Review", "monitor-play"),
+    ("Analytics", "chart-bar"),
     ("Datasets", "database"),
-    ("Models", "brain-circuit"),
-    ("Settings", "settings"),
-    ("Help", "circle-question-mark"),
-    ("Theme", "sun-moon"),
-    ("Bell", "bell"),
+    ("Models", "brain"),
+    ("Settings", "gear-six"),
+    ("Help", "question"),
+    ("Theme", "circle-half"),
+    ("Bell", "bell-simple"),
     ("User", "user"),
-    ("Search", "search"),
-    ("Filter", "funnel"),
+    ("Search", "magnifying-glass"),
+    ("Filter", "funnel-simple"),
     ("Camera", "camera"),
-    ("Expand", "expand"),
-    ("More", "ellipsis"),
+    ("Expand", "arrows-out-simple"),
+    ("More", "dots-three"),
     ("Play", "play"),
     ("Pause", "pause"),
-    ("Previous", "step-back"),
-    ("Next", "step-forward"),
-    ("Volume", "volume-2"),
-    ("Fullscreen", "fullscreen"),
-    ("ChevronRight", "chevron-right"),
-    ("Annotations", "scan"),
-    ("Tracks", "route"),
+    ("Previous", "skip-back"),
+    ("Next", "skip-forward"),
+    ("Volume", "speaker-high"),
+    ("Fullscreen", "corners-out"),
+    ("ChevronRight", "caret-right"),
+    ("Annotations", "bounding-box"),
+    ("Tracks", "path"),
     ("Species", "fish"),
-    ("Events", "activity"),
+    ("Events", "pulse"),
     ("Environment", "waves"),
     ("Files", "folder-open"),
     ("Clock", "clock"),
-    ("Alert", "triangle-alert"),
-    ("Refresh", "refresh-cw"),
-    ("Send", "send"),
-    ("Sparkle", "sparkles"),
-    ("Merge", "merge"),
-    ("Split", "split"),
-    ("Undo", "undo-2"),
-    ("Redo", "redo-2"),
-    ("Save", "save"),
-    ("Export", "download"),
-    ("Drop", "droplet"),
+    ("Alert", "warning"),
+    ("Refresh", "arrows-clockwise"),
+    ("Send", "paper-plane-tilt"),
+    ("Sparkle", "sparkle"),
+    ("Merge", "arrows-merge"),
+    ("Split", "arrows-split"),
+    ("Undo", "arrow-u-up-left"),
+    ("Redo", "arrow-u-up-right"),
+    ("Save", "floppy-disk"),
+    ("Export", "download-simple"),
+    ("Drop", "drop"),
     ("Minimize", "minus"),
     ("Maximize", "square"),
     ("Restore", "copy"),
     ("Close", "x"),
-    ("ListView", "list"),
-    ("GridView", "layout-grid"),
-    ("Inspect", "scan-search"),
+    ("ListView", "list-bullets"),
+    ("GridView", "grid-four"),
+    ("Inspect", "magnifying-glass-plus"),
 ]
+
+# Transport controls read better solid than outlined, in every style.
+SOLID = {"Play", "Pause"}
 
 ALLOWED_ELEMENTS = {"path", "circle", "rect", "line", "polyline", "polygon", "ellipse"}
 
@@ -82,6 +86,8 @@ def inner_markup(svg: str, name: str) -> str:
     if not match:
         raise ValueError(f"{name}: no <svg> element")
     body = " ".join(match.group(1).split())
+    # Phosphor pads some icons with an invisible full-size rectangle.
+    body = re.sub(r'<rect width="256" height="256" fill="none"\s*/>', "", body).strip()
     for element in re.findall(r"<\s*([a-zA-Z]+)", body):
         if element not in ALLOWED_ELEMENTS:
             raise ValueError(f"{name}: unexpected <{element}> element")
@@ -90,28 +96,39 @@ def inner_markup(svg: str, name: str) -> str:
     return body
 
 
+def artwork(assets: Path, weight: str, icon: str) -> str:
+    suffix = "" if weight == "regular" else f"-{weight}"
+    path = assets / weight / f"{icon}{suffix}.svg"
+    return inner_markup(path.read_text(encoding="utf-8"), f"{icon}{suffix}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("icons", type=Path, help="lucide-static package/icons directory")
-    parser.add_argument("--version", required=True, help="Lucide version, for the header")
+    parser.add_argument("assets", type=Path, help="@phosphor-icons/core package/assets directory")
+    parser.add_argument("--version", required=True, help="Phosphor version, for the header")
     arguments = parser.parse_args()
 
     cases = []
     for enumerator, icon in GLYPHS:
-        svg = (arguments.icons / f"{icon}.svg").read_text(encoding="utf-8")
+        regular = artwork(arguments.assets, "fill" if enumerator in SOLID else "regular", icon)
+        duotone = artwork(arguments.assets, "fill" if enumerator in SOLID else "duotone", icon)
         cases.append(
             f"    case Glyph::{enumerator}:  // {icon}\n"
-            f'        return QByteArrayLiteral(R"svg({inner_markup(svg, icon)})svg");'
+            f"        return duotone\n"
+            f'            ? QByteArrayLiteral(R"svg({duotone})svg")\n'
+            f'            : QByteArrayLiteral(R"svg({regular})svg");'
         )
 
     OUTPUT.write_text(
         "// Generated by tools/generate_glyph_artwork.py. Do not edit by hand.\n"
-        f"//\n// Icon artwork from Lucide v{arguments.version} (https://lucide.dev).\n"
-        "// ISC License. Copyright (c) Lucide Icons and Contributors.\n"
-        "// See third_party/lucide/LICENSE for the full licence text.\n\n"
+        f"//\n// Icon artwork from Phosphor Icons v{arguments.version} (https://phosphoricons.com).\n"
+        "// MIT License. Copyright (c) 2023 Phosphor Icons.\n"
+        "// See third_party/phosphor/LICENSE for the full licence text.\n\n"
         '#include "ui/common/GlyphArtwork.h"\n\n'
         "namespace aquatrack::ui {\n\n"
-        "QByteArray glyphArtwork(Glyph glyph)\n{\n    switch (glyph) {\n"
+        "QByteArray glyphArtwork(Glyph glyph, GlyphStyle style)\n{\n"
+        "    const bool duotone = style == GlyphStyle::Duotone;\n"
+        "    switch (glyph) {\n"
         + "\n".join(cases)
         + "\n    }\n    return {};\n}\n\n}  // namespace aquatrack::ui\n",
         encoding="utf-8",

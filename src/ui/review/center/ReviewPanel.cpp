@@ -19,6 +19,7 @@
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -144,14 +145,16 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // ---- Sequence timeline -------------------------------------------
     auto* timelineCard = card(lower);
     auto* timelineBody = new QVBoxLayout(timelineCard);
-    timelineBody->setContentsMargins(12, 6, 12, 8);
+    timelineBody->setContentsMargins(14, 12, 14, 10);
     timelineBody->setSpacing(4);
 
-    // Track lanes: one bar per track, gaps where it was lost, links for
-    // likely identity switches. Self-explanatory next to the transport.
-    m_timeline = new TrackLanes(timelineCard);
+    // Fish activity across the sequence as a heat strip, with the track
+    // lanes as one of its modes. Clicking either seeks.
+    m_activity = new ActivityPanel(timelineCard);
+    m_timeline = m_activity->lanes();
     connect(m_timeline, &TrackLanes::frameRequested, this, &ReviewPanel::frameRequested);
-    timelineBody->addWidget(m_timeline);
+    connect(m_activity, &ActivityPanel::timestampRequested, this, &ReviewPanel::timestampRequested);
+    timelineBody->addWidget(m_activity);
 
     m_filmstrip = new Filmstrip(timelineCard);
     connect(m_filmstrip, &Filmstrip::frameRequested, this, &ReviewPanel::frameRequested);
@@ -285,8 +288,23 @@ QWidget* ReviewPanel::buildHeader()
 
 void ReviewPanel::setMediaTitle(const QString& title, const QString& detail)
 {
-    m_title->setText(title);
-    m_detail->setText(detail);
+    m_titleText = title;
+    m_detailText = detail;
+    fitHeaderText();
+}
+
+void ReviewPanel::fitHeaderText()
+{
+    // Shortened with an ellipsis rather than cut mid-word at the edge; the
+    // whole text is the tooltip.
+    const auto fit = [](QLabel* label, const QString& text) {
+        const int room = std::max(40, label->width());
+        const QString shown = label->fontMetrics().elidedText(text, Qt::ElideRight, room);
+        label->setText(shown);
+        label->setToolTip(shown == text ? QString() : text);
+    };
+    fit(m_title, m_titleText);
+    fit(m_detail, m_detailText);
 }
 
 void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent)
@@ -308,6 +326,8 @@ void ReviewPanel::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     setCompactHeader(width() < 820);
+    // After the header has been laid out at the new width.
+    QTimer::singleShot(0, this, &ReviewPanel::fitHeaderText);
 }
 
 void ReviewPanel::setCompactHeader(bool compact)
@@ -417,7 +437,8 @@ QWidget* ReviewPanel::buildAnalyticsRow(QWidget* parent)
         grid->setColumnStretch(index, 1);
     grid->setContentsMargins(2, 10, 2, 2);
     row->setProperty("role", "bare");
-    row->setMinimumHeight(150);
+    // Fits the tab page under the minimum tab card, so no chart is clipped.
+    row->setMinimumHeight(126);
     return row;
 }
 
@@ -436,6 +457,7 @@ void ReviewPanel::configureSequence(int frames, int frameRate, qint64 durationMs
     const QSignalBlocker blocker(m_frameSlider);
     m_frameSlider->setRange(1, std::max(1, frames));
     m_timeline->setSequenceLength(frames, m_frameRate);
+    m_activity->setDuration(frames > 0 ? m_durationMs : 0);
 }
 
 void ReviewPanel::showFrame(const QImage& image, const QVector<aquatrack::GroundTruth>& annotations,
@@ -448,6 +470,7 @@ void ReviewPanel::showFrame(const QImage& image, const QVector<aquatrack::Ground
         m_frameSlider->setValue(frame);
     }
     m_timeline->setCurrentFrame(frame);
+    m_activity->setPlayhead(timeMs);
     m_filmstrip->setCurrentFrame(frame);
     m_clock->setText(QStringLiteral("%1 / %2").arg(
         clock(timeMs),
@@ -468,7 +491,7 @@ void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,
 
     // Count over time.
     ChartSeries tracks;
-    tracks.name = QStringLiteral("Unique tracks");
+    tracks.name = QStringLiteral("Tracks");
     tracks.color = palette::Accent;
     tracks.filled = true;
     ChartSeries observations;
@@ -582,11 +605,7 @@ void ReviewPanel::clearAnalytics()
     m_trackTable->setRowCount(0);
     m_eventTable->setRowCount(0);
     m_countTotal->clear();
+    m_activity->setActivity({}, {}, 0);
     m_tabs->setTabText(0, QStringLiteral("Tracks"));
     m_tabs->setTabText(1, QStringLiteral("Events"));
-}
-
-void ReviewPanel::showEventsTab()
-{
-    m_tabs->setCurrentIndex(1);
 }

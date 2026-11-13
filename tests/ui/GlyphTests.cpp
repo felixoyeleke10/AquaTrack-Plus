@@ -32,6 +32,15 @@ int main(int argc, char* argv[])
         requireTest(!aquatrack::ui::glyphArtwork(glyph).isEmpty(), "glyph has artwork");
         const QPixmap pixmap = aquatrack::ui::glyphPixmap(glyph, 24, Qt::white);
         requireTest(inkedPixels(pixmap) > 20, "glyph renders visible strokes");
+        // The duotone weight (active / featured icons) exists for every glyph
+        // and carries at least as much ink: the outline plus its tint.
+        using aquatrack::ui::GlyphStyle;
+        requireTest(!aquatrack::ui::glyphArtwork(glyph, GlyphStyle::Duotone).isEmpty(),
+                    "glyph has duotone artwork");
+        const QPixmap duotone =
+            aquatrack::ui::glyphPixmap(glyph, 24, Qt::white, GlyphStyle::Duotone);
+        requireTest(inkedPixels(duotone) >= inkedPixels(pixmap),
+                    "duotone renders the outline and its tint");
     }
     // Colour and transparency are applied, so disabled icons really dim.
     const QImage solid =

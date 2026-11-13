@@ -167,3 +167,8 @@ add_executable(aquatrack-sequence-edit-flow-tests tests/ui/SequenceEditFlowTests
 target_include_directories(aquatrack-sequence-edit-flow-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
 target_link_libraries(aquatrack-sequence-edit-flow-tests PRIVATE aquatrack-ui)
 add_test(NAME AquaTrackSequenceEditFlow COMMAND aquatrack-sequence-edit-flow-tests)
+
+add_executable(aquatrack-inspector-tabs-tests tests/ui/InspectorTabsTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-inspector-tabs-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
+target_link_libraries(aquatrack-inspector-tabs-tests PRIVATE aquatrack-ui)
+add_test(NAME AquaTrackInspectorTabs COMMAND aquatrack-inspector-tabs-tests)

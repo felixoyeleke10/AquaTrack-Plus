@@ -381,7 +381,7 @@ void TrackLanes::paintEvent(QPaintEvent* event)
     // ---- Likely identity switches ----------------------------------------
     QPen linkPen(palette::Danger, 1.4, Qt::DashLine, Qt::RoundCap);
     linkPen.setDashPattern({3, 2.5});
-    for (const auto& link : m_links) {
+    for (const auto& link : m_packed ? QVector<Link>() : m_links) {
         const int from = laneIndexOf(link.fromTrack);
         const int to = laneIndexOf(link.toTrack);
         if (from < 0 || to < 0)

@@ -2,6 +2,7 @@
 
 #include "analytics/SurveyAnalytics.h"
 #include "data/BrackishMotSequence.h"
+#include "ui/review/center/ActivityPanel.h"
 #include "ui/review/center/Timeline.h"
 
 #include <QWidget>
@@ -30,6 +31,7 @@ public:
 
     [[nodiscard]] SequenceView* sequenceView() const { return m_view; }
     [[nodiscard]] aquatrack::ui::TrackLanes* timeline() const { return m_timeline; }
+    [[nodiscard]] ActivityPanel* activity() const { return m_activity; }
     [[nodiscard]] aquatrack::ui::Filmstrip* filmstrip() const { return m_filmstrip; }
 
     void configureSequence(int frames, int frameRate, qint64 durationMs = -1);
@@ -51,8 +53,6 @@ public:
     void setTracksTable(const std::vector<aquatrack::analytics::TrackSpan>& spans);
     void setEventsTable(const std::vector<aquatrack::analytics::SurveyEvent>& events);
     void clearAnalytics();
-    // Brings the Events tab forward (from "Show all events" in the rail).
-    void showEventsTab();
 
 signals:
     void playToggled();
@@ -78,7 +78,8 @@ private:
     QWidget* buildAnalyticsRow(QWidget* parent);
 
     SequenceView* m_view = nullptr;
-    aquatrack::ui::TrackLanes* m_timeline = nullptr;
+    ActivityPanel* m_activity = nullptr;
+    aquatrack::ui::TrackLanes* m_timeline = nullptr;  // inside m_activity
     aquatrack::ui::Filmstrip* m_filmstrip = nullptr;
 
     QLabel* m_title = nullptr;
@@ -92,6 +93,10 @@ private:
     bool m_analysisRunning = false;
     bool m_compactHeader = false;
     QString m_sourceText;
+    // Full header texts; the labels show them shortened to fit.
+    QString m_titleText;
+    QString m_detailText;
+    void fitHeaderText();
 
     QPushButton* m_play = nullptr;
     QSlider* m_frameSlider = nullptr;

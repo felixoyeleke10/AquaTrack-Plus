@@ -3,6 +3,7 @@
 #include "ui/AppTheme.h"
 #include "ui/common/Charts.h"
 #include "ui/common/Glyphs.h"
+#include "ui/common/InspectorTabs.h"
 #include "ui/common/Widgets.h"
 
 #include <QFontMetrics>
@@ -14,23 +15,25 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace aquatrack::ui;
 namespace analytics = aquatrack::analytics;
 
 namespace {
 
-constexpr int kEventsShown = 6;
-constexpr int kObservationRow = 30;
+constexpr int kRow = 30;
 constexpr int kColourRole = Qt::UserRole + 1;
 constexpr int kTrackRole = Qt::UserRole + 2;
 constexpr int kSpeciesRole = Qt::UserRole + 3;
 constexpr int kConfidenceRole = Qt::UserRole + 4;
 constexpr int kVerifiedRole = Qt::UserRole + 5;
+constexpr int kTrailingRole = Qt::UserRole + 6;
 
 QString shortClock(qint64 milliseconds)
 {
@@ -40,17 +43,9 @@ QString shortClock(qint64 milliseconds)
         .arg(seconds % 60, 2, 10, QLatin1Char('0'));
 }
 
-QColor severityColor(analytics::EventSeverity severity)
+QString percent(double ratio)
 {
-    switch (severity) {
-    case analytics::EventSeverity::Alert:
-        return palette::Danger;
-    case analytics::EventSeverity::Warning:
-        return palette::Warning;
-    case analytics::EventSeverity::Info:
-        break;
-    }
-    return palette::Accent;
+    return QStringLiteral("%1%").arg(int(std::round(ratio * 100)));
 }
 
 QWidget* bare(QWidget* parent)
@@ -60,21 +55,18 @@ QWidget* bare(QWidget* parent)
     return widget;
 }
 
-// A heading over a card, with an optional figure at the right.
-QHBoxLayout* heading(const QString& text, QWidget* parent, QLabel** figure = nullptr)
+// A page that scrolls only if its content is taller than the panel.
+QScrollArea* scrollPage(QWidget* content, QWidget* parent)
 {
-    auto* row = new QHBoxLayout;
-    row->setContentsMargins(0, 0, 2, 0);
-    row->addWidget(sectionLabel(text, parent));
-    row->addStretch();
-    if (figure) {
-        *figure = typedLabel(QString(), "dim", parent);
-        row->addWidget(*figure);
-    }
-    return row;
+    auto* scroll = new QScrollArea(parent);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(content);
+    return scroll;
 }
 
-// A small caption over a value, as used in the identity-switch card.
+// A small caption over a value.
 QLabel* stat(QGridLayout* grid, int column, const QString& caption, QWidget* parent)
 {
     grid->addWidget(typedLabel(caption, "dim", parent), 0, column);
@@ -84,61 +76,28 @@ QLabel* stat(QGridLayout* grid, int column, const QString& caption, QWidget* par
     return value;
 }
 
-// One event: severity dot, what happened (shortened to one line; the full
-// text is the tooltip), when. The whole row is a button that moves the
-// playhead there. Painted, so its height never depends on wrapping.
-class EventButton final : public QPushButton {
-public:
-    EventButton(const analytics::SurveyEvent& event, QWidget* parent)
-        : QPushButton(parent),
-          m_text(QString::fromStdString(event.description)),
-          m_time(shortClock(event.atMs)),
-          m_colour(severityColor(event.severity))
-    {
-        setProperty("role", "row");
-        setCursor(Qt::PointingHandCursor);
-        setFixedHeight(30);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setToolTip(QStringLiteral("%1\nClick to go to %2").arg(m_text, m_time));
-    }
-
-protected:
-    void paintEvent(QPaintEvent* event) override
-    {
-        QPushButton::paintEvent(event);  // hover background from the sheet
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(m_colour);
-        painter.drawEllipse(QPointF(12, height() / 2.0), 3.5, 3.5);
-
-        QFont mono(QStringLiteral("Cascadia Mono"));
-        mono.setStyleHint(QFont::Monospace);
-        mono.setPixelSize(11);
-        const int timeWidth = QFontMetrics(mono).horizontalAdvance(m_time);
-        painter.setFont(mono);
-        painter.setPen(palette::TextDim);
-        const QRect timeBox(width() - 8 - timeWidth, 0, timeWidth, height());
-        painter.drawText(timeBox, Qt::AlignRight | Qt::AlignVCenter, m_time);
-
-        QFont text = font();
-        text.setPixelSize(12);
-        painter.setFont(text);
-        painter.setPen(underMouse() ? palette::TextPrimary : palette::TextSecondary);
-        const QRect textBox(24, 0, timeBox.left() - 10 - 24, height());
-        painter.drawText(textBox, Qt::AlignLeft | Qt::AlignVCenter,
-                         QFontMetrics(text).elidedText(m_text, Qt::ElideRight, textBox.width()));
-    }
-
-private:
-    QString m_text;
-    QString m_time;
-    QColor m_colour;
-};
-
-QPushButton* eventRow(const analytics::SurveyEvent& event, QWidget* parent)
+QListWidget* rowList(const QString& name, QWidget* parent)
 {
-    return new EventButton(event, parent);
+    auto* list = new QListWidget(parent);
+    list->setObjectName(name);
+    list->setFrameShape(QFrame::NoFrame);
+    list->setMouseTracking(true);
+    list->setUniformItemSizes(true);
+    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list->setStyleSheet(
+        QStringLiteral("QListWidget#%1 { background: transparent; border: none; }").arg(name));
+    return list;
+}
+
+void paintRowBackground(QPainter* painter, const QStyleOptionViewItem& option, QRectF row)
+{
+    const bool selected = option.state & QStyle::State_Selected;
+    const bool hovered = option.state & QStyle::State_MouseOver;
+    if (!selected && !hovered)
+        return;
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(selected ? palette::AccentTint : palette::Surface);
+    painter->drawRoundedRect(row, 7, 7);
 }
 
 // An observation in the current frame: track colour, ID, species, a tick
@@ -149,7 +108,7 @@ public:
 
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override
     {
-        return {0, kObservationRow};
+        return {0, kRow};
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -158,14 +117,8 @@ public:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
         const QRectF row = QRectF(option.rect).adjusted(2, 1, -2, -1);
-        const bool selected = option.state & QStyle::State_Selected;
-        const bool hovered = option.state & QStyle::State_MouseOver;
         const bool enabled = option.state & QStyle::State_Enabled;
-        if (selected || hovered) {
-            painter->setPen(Qt::NoPen);
-            painter->setBrush(selected ? palette::AccentTint : palette::Surface);
-            painter->drawRoundedRect(row, 7, 7);
-        }
+        paintRowBackground(painter, option, row);
 
         const QColor colour = index.data(kColourRole).value<QColor>();
         const double confidence = index.data(kConfidenceRole).toDouble();
@@ -189,7 +142,6 @@ public:
                           Qt::AlignLeft | Qt::AlignVCenter, id);
         x += idWidth + 10;
 
-        // Right side, right to left: confidence, then the verified tick.
         painter->setFont(font);
         const QString value = QString::number(confidence, 'f', 2);
         const int valueWidth = QFontMetrics(font).horizontalAdvance(QStringLiteral("0.00"));
@@ -218,6 +170,44 @@ public:
     }
 };
 
+// A switch candidate: "Track 9 -> 10" with when and how alike, right-aligned.
+class SwitchDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override
+    {
+        return {0, kRow};
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const QRectF row = QRectF(option.rect).adjusted(2, 1, -2, -1);
+        paintRowBackground(painter, option, row);
+        const bool selected = option.state & QStyle::State_Selected;
+
+        QFont font = option.font;
+        font.setPixelSize(12);
+        const QString trailing = index.data(kTrailingRole).toString();
+        const int trailingWidth = QFontMetrics(font).horizontalAdvance(trailing);
+        painter->setFont(font);
+        painter->setPen(palette::TextDim);
+        painter->drawText(row.adjusted(10, 0, -10, 0), Qt::AlignRight | Qt::AlignVCenter, trailing);
+
+        QFont bold = font;
+        bold.setWeight(selected ? QFont::DemiBold : QFont::Normal);
+        painter->setFont(bold);
+        painter->setPen(selected ? palette::TextPrimary : palette::TextSecondary);
+        const QRectF text(row.left() + 10, row.top(), row.width() - 30 - trailingWidth, row.height());
+        painter->drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
+                          index.data(Qt::DisplayRole).toString());
+        painter->restore();
+    }
+};
+
 }  // namespace
 
 InsightPanel::InsightPanel(QWidget* parent) : QFrame(parent)
@@ -227,158 +217,77 @@ InsightPanel::InsightPanel(QWidget* parent) : QFrame(parent)
     // strips buttons (the primary gradient included) of their background.
     setStyleSheet(QStringLiteral("InsightPanel { background: transparent; }"));
 
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setFrameShape(QFrame::NoFrame);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 6, 0);
+    m_tabs = new InspectorTabs(this);
+    m_framePage = m_tabs->addPage(Glyph::Annotations, QStringLiteral("In frame"), buildFramePage(),
+                                  QStringLiteral("What is annotated in this frame, and its edits"));
+    m_switchPage = m_tabs->addPage(Glyph::Merge, QStringLiteral("ID switches"), buildSwitchPage(),
+                                   QStringLiteral("Tracks that are probably the same animal"));
+    m_confidencePage = m_tabs->addPage(Glyph::Analytics, QStringLiteral("Confidence"),
+                                       buildConfidencePage(),
+                                       QStringLiteral("How sure the detector was, over time"));
+    outer->addWidget(m_tabs);
 
-    auto* content = bare(scroll);
-    auto* column = new QVBoxLayout(content);
-    column->setContentsMargins(0, 0, 6, 0);
-    column->setSpacing(8);
+    setEditingEnabled(false);
+    setCurrentObservations({});
+    setIdSwitches({});
+    setConfidenceSeries({}, 0.0);
+    setQuality(0, 0, 0, 0);
+}
 
-    // ---- Notable events ----------------------------------------------
-    column->addLayout(heading(QStringLiteral("Notable events"), content, &m_eventCount));
-    auto* eventCard = card(content);
-    auto* eventBody = new QVBoxLayout(eventCard);
-    eventBody->setContentsMargins(6, 6, 6, 6);
-    eventBody->setSpacing(0);
-    m_eventList = new QVBoxLayout;
-    m_eventList->setContentsMargins(0, 0, 0, 0);
-    m_eventList->setSpacing(0);
-    eventBody->addLayout(m_eventList);
-    m_eventEmpty = typedLabel(
-        QStringLiteral("Crowding, identity switches and very short tracks show up here once "
-                       "there are annotations."),
-        "dim", eventCard);
-    m_eventEmpty->setWordWrap(true);
-    m_eventEmpty->setContentsMargins(8, 6, 8, 6);
-    eventBody->addWidget(m_eventEmpty);
-    m_allEvents = textButton(QString(), eventCard, "ghost");
-    m_allEvents->setObjectName(QStringLiteral("allEvents"));
-    connect(m_allEvents, &QPushButton::clicked, this, &InsightPanel::allEventsRequested);
-    eventBody->addWidget(m_allEvents, 0, Qt::AlignLeft);
-    column->addWidget(eventCard);
+// ------------------------------------------------------------ In this frame
 
-    // ---- Identity switch candidate ------------------------------------
-    column->addSpacing(6);
-    m_switchCard = card(content, "alert");
-    auto* switchBody = new QVBoxLayout(m_switchCard);
-    switchBody->setContentsMargins(14, 12, 14, 12);
-    switchBody->setSpacing(10);
-
-    auto* switchHead = new QHBoxLayout;
-    switchHead->setContentsMargins(0, 0, 0, 0);
-    switchHead->addWidget(sectionLabel(QStringLiteral("Possible ID switch"), m_switchCard));
-    switchHead->addStretch();
-    m_switchBadge = new Badge(m_switchCard);
-    switchHead->addWidget(m_switchBadge);
-    switchBody->addLayout(switchHead);
-
-    m_switchSummary = typedLabel(QStringLiteral("—"), "subtitle", m_switchCard);
-    switchBody->addWidget(m_switchSummary);
-
-    auto* stats = new QGridLayout;
-    stats->setContentsMargins(0, 0, 0, 0);
-    stats->setHorizontalSpacing(18);
-    stats->setVerticalSpacing(1);
-    m_switchAt = stat(stats, 0, QStringLiteral("At"), m_switchCard);
-    m_switchGap = stat(stats, 1, QStringLiteral("Gap"), m_switchCard);
-    m_switchSimilarity = stat(stats, 2, QStringLiteral("Similarity"), m_switchCard);
-    stats->setColumnStretch(3, 1);
-    switchBody->addLayout(stats);
-
-    auto* actions = new QHBoxLayout;
-    actions->setContentsMargins(0, 2, 0, 0);
-    actions->setSpacing(8);
-    m_merge = textButton(QStringLiteral("Merge tracks"), m_switchCard, "primary");
-    m_merge->setIcon(glyphIcon(Glyph::Merge, 15, Qt::white, Qt::white));
-    m_reviewClip = textButton(QStringLiteral("Go to frame"), m_switchCard);
-    actions->addWidget(m_merge, 1);
-    actions->addWidget(m_reviewClip, 1);
-    switchBody->addLayout(actions);
-
-    m_switchRemaining = typedLabel(QString(), "dim", m_switchCard);
-    switchBody->addWidget(m_switchRemaining);
-
-    connect(m_merge, &QPushButton::clicked, this, [this] {
-        if (m_candidate)
-            emit mergeTracksRequested(m_candidate->endingTrack, m_candidate->startingTrack);
-    });
-    connect(m_reviewClip, &QPushButton::clicked, this, [this] {
-        if (m_candidate)
-            emit frameRequested(int(m_candidate->atMs));
-    });
-    m_switchCard->hide();
-    column->addWidget(m_switchCard);
-
-    // ---- Confidence trend ---------------------------------------------
-    column->addSpacing(6);
-    column->addLayout(heading(QStringLiteral("Confidence over time"), content));
-    auto* confidenceCard = card(content);
-    auto* confidenceBody = new QVBoxLayout(confidenceCard);
-    confidenceBody->setContentsMargins(12, 10, 12, 10);
-    m_confidenceChart = new LineChart(confidenceCard);
-    m_confidenceChart->setEmptyText(QStringLiteral("Open a sequence"));
-    m_confidenceChart->setMinimumHeight(92);
-    confidenceBody->addWidget(m_confidenceChart);
-    column->addWidget(confidenceCard);
-
-    // ---- Frame annotations --------------------------------------------
-    column->addSpacing(6);
-    column->addLayout(heading(QStringLiteral("In this frame"), content, &m_frameCount));
-    auto* editCard = card(content);
-    auto* editBody = new QVBoxLayout(editCard);
-    editBody->setContentsMargins(8, 8, 8, 10);
-    editBody->setSpacing(8);
+QWidget* InsightPanel::buildFramePage()
+{
+    auto* page = bare(nullptr);
+    auto* column = new QVBoxLayout(page);
+    column->setContentsMargins(0, 0, 0, 0);
+    auto* body = card(page);
+    column->addWidget(body);
+    auto* layout = new QVBoxLayout(body);
+    layout->setContentsMargins(8, 8, 8, 10);
+    layout->setSpacing(8);
 
     m_editHint = typedLabel(
         QStringLiteral("Create or open a project so edits have somewhere durable to go."),
-        "dim", editCard);
+        "dim", body);
     m_editHint->setWordWrap(true);
     m_editHint->setContentsMargins(6, 2, 6, 0);
-    editBody->addWidget(m_editHint);
+    layout->addWidget(m_editHint);
 
-    m_observations = new QListWidget(editCard);
-    m_observations->setObjectName(QStringLiteral("frameObservations"));
-    m_observations->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    m_observations->setFrameShape(QFrame::NoFrame);
-    m_observations->setMouseTracking(true);
-    m_observations->setUniformItemSizes(true);
+    m_observations = rowList(QStringLiteral("frameObservations"), body);
     m_observations->setItemDelegate(new ObservationDelegate(m_observations));
-    m_observations->setStyleSheet(QStringLiteral(
-        "QListWidget#frameObservations { background: transparent; border: none; }"));
-    m_observations->setMinimumHeight(kObservationRow * 3 + 2);
-    editBody->addWidget(m_observations);
-    m_observationsEmpty = typedLabel(QStringLiteral("Nothing annotated in this frame."), "dim", editCard);
-    m_observationsEmpty->setContentsMargins(6, 0, 6, 0);
-    editBody->addWidget(m_observationsEmpty);
+    m_observations->setMinimumHeight(kRow * 3 + 2);
+    layout->addWidget(m_observations, 1);
+    m_observationsEmpty = typedLabel(QStringLiteral("Nothing annotated in this frame."), "dim", body);
+    m_observationsEmpty->setAlignment(Qt::AlignCenter);
+    layout->addWidget(m_observationsEmpty, 1);
 
-    editBody->addWidget(divider(editCard));
+    layout->addWidget(divider(body));
     auto* editRow = new QHBoxLayout;
     editRow->setContentsMargins(0, 0, 0, 0);
     editRow->setSpacing(6);
-    m_relabel = textButton(QStringLiteral("Relabel..."), editCard);
+    m_relabel = textButton(QStringLiteral("Relabel..."), body);
     m_relabel->setToolTip(QStringLiteral("Change the species of the selected annotation"));
-    m_delete = textButton(QStringLiteral("Delete"), editCard);
+    m_delete = textButton(QStringLiteral("Delete"), body);
     m_delete->setToolTip(QStringLiteral("Delete the selected annotation"));
     editRow->addWidget(m_relabel, 1);
     editRow->addWidget(m_delete, 1);
-    editBody->addLayout(editRow);
+    layout->addLayout(editRow);
 
     auto* saveRow = new QHBoxLayout;
     saveRow->setContentsMargins(0, 0, 0, 0);
     saveRow->setSpacing(6);
-    m_undo = iconButton(Glyph::Undo, QStringLiteral("Undo"), editCard, "icon", 16);
-    m_redo = iconButton(Glyph::Redo, QStringLiteral("Redo"), editCard, "icon", 16);
-    m_save = textButton(QStringLiteral("Save annotations"), editCard, "primary");
+    m_undo = iconButton(Glyph::Undo, QStringLiteral("Undo"), body, "icon", 16);
+    m_redo = iconButton(Glyph::Redo, QStringLiteral("Redo"), body, "icon", 16);
+    m_save = textButton(QStringLiteral("Save annotations"), body, "primary");
     m_save->setObjectName(QStringLiteral("saveAnnotations"));
     m_save->setIcon(glyphIcon(Glyph::Save, 15, Qt::white, Qt::white));
     saveRow->addWidget(m_undo);
     saveRow->addWidget(m_redo);
     saveRow->addWidget(m_save, 1);
-    editBody->addLayout(saveRow);
-    column->addWidget(editCard);
+    layout->addLayout(saveRow);
 
     connect(m_relabel, &QPushButton::clicked, this, [this] {
         const auto id = selectedObservationId();
@@ -398,75 +307,198 @@ InsightPanel::InsightPanel(QWidget* parent) : QFrame(parent)
     connect(m_undo, &QPushButton::clicked, this, &InsightPanel::undoRequested);
     connect(m_redo, &QPushButton::clicked, this, &InsightPanel::redoRequested);
     connect(m_save, &QPushButton::clicked, this, &InsightPanel::saveRequested);
-
-    setEditingEnabled(false);
-    setEvents({});
-    setCurrentObservations({});
-    column->addStretch();
-    scroll->setWidget(content);
-
-    auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(0, 0, 0, 0);
-    outer->addWidget(scroll);
+    return page;
 }
 
-QString InsightPanel::selectedObservationId() const
-{
-    auto* item = m_observations->currentItem();
-    return item ? item->data(Qt::UserRole).toString() : QString();
-}
+// ------------------------------------------------------------ ID switches
 
-void InsightPanel::setEvents(const std::vector<analytics::SurveyEvent>& events)
+QWidget* InsightPanel::buildSwitchPage()
 {
-    while (m_eventList->count() > 0) {
-        auto* item = m_eventList->takeAt(0);
-        if (QWidget* widget = item->widget()) {
-            // Out of the layout, a row keeps painting at its last position
-            // until it is deleted; hide it now.
-            widget->hide();
-            widget->deleteLater();
+    auto* content = bare(nullptr);
+    auto* column = new QVBoxLayout(content);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(10);
+
+    m_switchEmpty = typedLabel(
+        QStringLiteral("No likely identity switches. A switch is a track that ends as another "
+                       "begins close by with a similar box, which is often one animal the "
+                       "tracker lost and picked up again."),
+        "dim", content);
+    m_switchEmpty->setWordWrap(true);
+    m_switchEmpty->setContentsMargins(4, 0, 4, 0);
+    column->addWidget(m_switchEmpty);
+
+    m_switchContent = bare(content);
+    auto* switchColumn = new QVBoxLayout(m_switchContent);
+    switchColumn->setContentsMargins(0, 0, 0, 0);
+    switchColumn->setSpacing(10);
+
+    // The chosen candidate, with what to do about it.
+    auto* chosen = card(m_switchContent, "alert");
+    auto* chosenBody = new QVBoxLayout(chosen);
+    chosenBody->setContentsMargins(14, 12, 14, 12);
+    chosenBody->setSpacing(10);
+    auto* head = new QHBoxLayout;
+    head->setContentsMargins(0, 0, 0, 0);
+    m_switchSummary = typedLabel(QStringLiteral("—"), "subtitle", chosen);
+    head->addWidget(m_switchSummary);
+    head->addStretch();
+    m_switchBadge = new Badge(chosen);
+    head->addWidget(m_switchBadge);
+    chosenBody->addLayout(head);
+
+    auto* stats = new QGridLayout;
+    stats->setContentsMargins(0, 0, 0, 0);
+    stats->setHorizontalSpacing(18);
+    stats->setVerticalSpacing(1);
+    m_switchAt = stat(stats, 0, QStringLiteral("At"), chosen);
+    m_switchGap = stat(stats, 1, QStringLiteral("Gap"), chosen);
+    m_switchSimilarity = stat(stats, 2, QStringLiteral("Similarity"), chosen);
+    stats->setColumnStretch(3, 1);
+    chosenBody->addLayout(stats);
+
+    auto* actions = new QHBoxLayout;
+    actions->setContentsMargins(0, 2, 0, 0);
+    actions->setSpacing(8);
+    m_merge = textButton(QStringLiteral("Merge tracks"), chosen, "primary");
+    m_merge->setIcon(glyphIcon(Glyph::Merge, 15, Qt::white, Qt::white));
+    m_merge->setToolTip(QStringLiteral("Join the two tracks into one"));
+    m_reviewClip = textButton(QStringLiteral("Go to frame"), chosen);
+    actions->addWidget(m_merge, 1);
+    actions->addWidget(m_reviewClip, 1);
+    chosenBody->addLayout(actions);
+    switchColumn->addWidget(chosen);
+
+    connect(m_merge, &QPushButton::clicked, this, [this] {
+        if (m_selectedSwitch >= 0 && m_selectedSwitch < int(m_candidates.size())) {
+            const auto& candidate = m_candidates[std::size_t(m_selectedSwitch)];
+            emit mergeTracksRequested(candidate.endingTrack, candidate.startingTrack);
         }
-        delete item;
-    }
-    m_eventEmpty->setVisible(events.empty());
-    auto* container = m_eventEmpty->parentWidget();
-    const int shown = std::min<int>(int(events.size()), kEventsShown);
-    for (int index = 0; index < shown; ++index) {
-        const auto& event = events.at(std::size_t(index));
-        auto* row = eventRow(event, container);
-        const qint64 at = event.atMs;
-        connect(row, &QPushButton::clicked, this, [this, at] { emit frameRequested(int(at)); });
-        m_eventList->addWidget(row);
-    }
-    const int hidden = int(events.size()) - shown;
-    m_allEvents->setVisible(hidden > 0);
-    m_allEvents->setText(QStringLiteral("Show all %1 events").arg(events.size()));
-    m_eventCount->setText(events.empty() ? QString() : QString::number(events.size()));
+    });
+    connect(m_reviewClip, &QPushButton::clicked, this, [this] {
+        if (m_selectedSwitch >= 0 && m_selectedSwitch < int(m_candidates.size()))
+            emit frameRequested(int(m_candidates[std::size_t(m_selectedSwitch)].atMs));
+    });
+
+    // Every candidate; choosing one shows it above.
+    auto* listHead = new QHBoxLayout;
+    listHead->setContentsMargins(2, 4, 2, 0);
+    listHead->addWidget(sectionLabel(QStringLiteral("All candidates"), m_switchContent));
+    listHead->addStretch();
+    m_switchListTitle = typedLabel(QString(), "dim", m_switchContent);
+    listHead->addWidget(m_switchListTitle);
+    switchColumn->addLayout(listHead);
+    auto* listCard = card(m_switchContent);
+    auto* listBody = new QVBoxLayout(listCard);
+    listBody->setContentsMargins(6, 6, 6, 6);
+    m_switchList = rowList(QStringLiteral("switchCandidates"), listCard);
+    m_switchList->setItemDelegate(new SwitchDelegate(m_switchList));
+    m_switchList->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    m_switchList->setToolTip(QStringLiteral("Click to inspect; double-click to go there"));
+    connect(m_switchList, &QListWidget::currentRowChanged, this, &InsightPanel::showSwitch);
+    connect(m_switchList, &QListWidget::itemDoubleClicked, this, [this] {
+        if (m_selectedSwitch >= 0 && m_selectedSwitch < int(m_candidates.size()))
+            emit frameRequested(int(m_candidates[std::size_t(m_selectedSwitch)].atMs));
+    });
+    listBody->addWidget(m_switchList);
+    switchColumn->addWidget(listCard);
+    column->addWidget(m_switchContent);
+    column->addStretch();
+    return scrollPage(content, nullptr);
 }
 
-void InsightPanel::setIdSwitch(const std::optional<analytics::IdSwitchCandidate>& candidate,
-                               int remaining)
+void InsightPanel::setIdSwitches(const std::vector<analytics::IdSwitchCandidate>& candidates)
 {
-    m_candidate = candidate;
-    if (!candidate) {
-        m_switchCard->hide();
-        return;
+    m_candidates = candidates;
+    const bool any = !m_candidates.empty();
+    m_switchEmpty->setVisible(!any);
+    m_switchContent->setVisible(any);
+    m_tabs->setPageCount(m_switchPage, int(m_candidates.size()));
+    m_tabs->setPageEnabled(m_switchPage, any);
+
+    const int keep = std::clamp(m_selectedSwitch, 0, std::max(0, int(m_candidates.size()) - 1));
+    {
+        const QSignalBlocker blocker(m_switchList);
+        m_switchList->clear();
+        for (const auto& candidate : m_candidates) {
+            auto* item = new QListWidgetItem(QStringLiteral("Track %1  →  %2")
+                                                 .arg(candidate.endingTrack)
+                                                 .arg(candidate.startingTrack),
+                                             m_switchList);
+            item->setData(kTrailingRole, QStringLiteral("%1   %2")
+                                             .arg(shortClock(candidate.atMs),
+                                                  percent(candidate.similarity)));
+        }
+        m_switchList->setFixedHeight(int(m_candidates.size()) * kRow + 2);
     }
-    m_switchCard->show();
+    m_switchListTitle->setText(any ? QString::number(m_candidates.size()) : QString());
+    m_selectedSwitch = -1;
+    if (any) {
+        m_switchList->setCurrentRow(keep);
+        showSwitch(keep);
+    }
+}
+
+void InsightPanel::showSwitch(int index)
+{
+    if (index < 0 || index >= int(m_candidates.size()) || index == m_selectedSwitch)
+        return;
+    m_selectedSwitch = index;
+    const auto& candidate = m_candidates[std::size_t(index)];
     m_switchSummary->setText(QStringLiteral("Track %1  →  Track %2")
-                                 .arg(candidate->endingTrack)
-                                 .arg(candidate->startingTrack));
-    m_switchAt->setText(shortClock(candidate->atMs));
-    m_switchGap->setText(QStringLiteral("%1 s").arg(candidate->gapMs / 1000.0, 0, 'f', 1));
-    m_switchSimilarity->setText(QStringLiteral("%1%").arg(candidate->similarity * 100.0, 0, 'f', 0));
-    const bool strong = candidate->similarity > 0.8;
+                                 .arg(candidate.endingTrack)
+                                 .arg(candidate.startingTrack));
+    m_switchAt->setText(shortClock(candidate.atMs));
+    m_switchGap->setText(QStringLiteral("%1 s").arg(candidate.gapMs / 1000.0, 0, 'f', 1));
+    m_switchSimilarity->setText(percent(candidate.similarity));
+    const bool strong = candidate.similarity > 0.8;
     m_switchBadge->setText(strong ? QStringLiteral("Likely") : QStringLiteral("Worth a look"));
     m_switchBadge->setAccent(strong ? palette::Warning : palette::TextSecondary);
-    m_switchRemaining->setText(remaining > 1
-                                   ? QStringLiteral("%1 more in this sequence, marked on the "
-                                                    "timeline")
-                                         .arg(remaining - 1)
-                                   : QStringLiteral("The only one in this sequence"));
+}
+
+// ------------------------------------------------------------- Confidence
+
+QWidget* InsightPanel::buildConfidencePage()
+{
+    auto* content = bare(nullptr);
+    auto* column = new QVBoxLayout(content);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(10);
+
+    auto* chartCard = card(content);
+    auto* chartBody = new QVBoxLayout(chartCard);
+    chartBody->setContentsMargins(12, 12, 12, 12);
+    chartBody->setSpacing(8);
+    chartBody->addWidget(sectionLabel(QStringLiteral("Mean confidence over time"), chartCard));
+    m_confidenceChart = new LineChart(chartCard);
+    m_confidenceChart->setEmptyText(QStringLiteral("Open a sequence"));
+    m_confidenceChart->setMinimumHeight(170);
+    chartBody->addWidget(m_confidenceChart);
+    column->addWidget(chartCard);
+
+    auto* figuresCard = card(content);
+    auto* figures = new QGridLayout(figuresCard);
+    figures->setContentsMargins(14, 12, 14, 12);
+    figures->setHorizontalSpacing(18);
+    figures->setVerticalSpacing(1);
+    m_meanConfidence = stat(figures, 0, QStringLiteral("Mean"), figuresCard);
+    m_lowConfidence = stat(figures, 1, QStringLiteral("Below 0.5"), figuresCard);
+    m_verified = stat(figures, 2, QStringLiteral("Verified"), figuresCard);
+    m_lowConfidence->setToolTip(QStringLiteral("Share of boxes the detector was less than 50% sure of"));
+    m_verified->setToolTip(QStringLiteral("Share of boxes a reviewer has confirmed"));
+    figures->setColumnStretch(3, 1);
+    column->addWidget(figuresCard);
+
+    auto* note = typedLabel(
+        QStringLiteral("Dips mark stretches worth reviewing first: murky water, crowding or "
+                       "unfamiliar species. Use Minimum confidence in the left rail to hide "
+                       "weak boxes."),
+        "dim", content);
+    note->setWordWrap(true);
+    note->setContentsMargins(4, 0, 4, 0);
+    column->addWidget(note);
+    column->addStretch();
+    return scrollPage(content, nullptr);
 }
 
 void InsightPanel::setConfidenceSeries(const QVector<double>& values, double latest)
@@ -479,6 +511,28 @@ void InsightPanel::setConfidenceSeries(const QVector<double>& values, double lat
     m_confidenceChart->setSeries({series});
     m_confidenceChart->setValueBadge(values.isEmpty() ? QString()
                                                       : QString::number(latest, 'f', 2));
+    m_tabs->setPageEnabled(m_confidencePage, !values.isEmpty());
+}
+
+void InsightPanel::setQuality(double meanConfidence, double lowConfidenceShare,
+                              double verifiedShare, int observations)
+{
+    const bool any = observations > 0;
+    m_meanConfidence->setText(any ? QString::number(meanConfidence, 'f', 2) : QStringLiteral("—"));
+    m_lowConfidence->setText(any ? percent(lowConfidenceShare) : QStringLiteral("—"));
+    m_lowConfidence->setStyleSheet(QStringLiteral("font-weight:600;color:%1")
+                                       .arg((any && lowConfidenceShare > 0.25 ? palette::Warning
+                                                                              : palette::TextPrimary)
+                                                .name()));
+    m_verified->setText(any ? percent(verifiedShare) : QStringLiteral("—"));
+}
+
+// ------------------------------------------------------- Shared plumbing
+
+QString InsightPanel::selectedObservationId() const
+{
+    auto* item = m_observations->currentItem();
+    return item ? item->data(Qt::UserRole).toString() : QString();
 }
 
 void InsightPanel::setCurrentObservations(
@@ -502,12 +556,9 @@ void InsightPanel::setCurrentObservations(
         if (QString::fromStdString(observation.id) == previous)
             m_observations->setCurrentItem(item);
     }
-    // Sized to its rows (up to eight), so the edit buttons sit right below.
-    const int rows = std::clamp(int(observations.size()), 3, 8);
-    m_observations->setFixedHeight(rows * kObservationRow + 2);
     m_observations->setVisible(!observations.empty());
     m_observationsEmpty->setVisible(observations.empty());
-    m_frameCount->setText(observations.empty() ? QString() : QString::number(observations.size()));
+    m_tabs->setPageCount(m_framePage, int(observations.size()));
     const bool chosen = m_editingEnabled && m_observations->currentItem();
     m_relabel->setEnabled(chosen);
     m_delete->setEnabled(chosen);
@@ -521,7 +572,7 @@ void InsightPanel::setEditingEnabled(bool enabled)
     m_delete->setEnabled(chosen);
     m_save->setEnabled(enabled && m_save->isEnabled());
     m_merge->setEnabled(enabled);
-    m_merge->setToolTip(enabled ? QString()
+    m_merge->setToolTip(enabled ? QStringLiteral("Join the two tracks into one")
                                 : QStringLiteral("Create or open a project to edit tracks"));
     m_observations->setEnabled(enabled);
     m_editHint->setVisible(!enabled);

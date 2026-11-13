@@ -11,6 +11,8 @@ add_library(aquatrack-ui
     src/ui/common/GlyphArtwork.h
     src/ui/common/HoverHint.cpp
     src/ui/common/HoverHint.h
+    src/ui/common/InspectorTabs.cpp
+    src/ui/common/InspectorTabs.h
     src/ui/common/WindowChrome.cpp
     src/ui/common/WindowChrome.h
     src/ui/common/Glyphs.cpp
@@ -41,6 +43,8 @@ add_library(aquatrack-ui
     src/ui/review/center/Timeline.h
     src/ui/review/left/SurveyPanel.cpp
     src/ui/review/left/SurveyPanel.h
+    src/ui/review/center/ActivityPanel.cpp
+    src/ui/review/center/ActivityPanel.h
     src/ui/review/center/ReviewPanel.cpp
     src/ui/review/center/ReviewPanel.h
     src/ui/review/center/video/SequenceView.cpp

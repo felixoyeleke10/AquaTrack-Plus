@@ -2,6 +2,8 @@
 
 #include "ui/AppTheme.h"
 
+#include <QFontMetrics>
+#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -237,18 +239,21 @@ void LineChart::paintEvent(QPaintEvent* event)
     // Legend above the plot.
     if (m_legend) {
         painter.setFont(smallFont(painter));
+        const QFontMetrics metrics(painter.font());
+        // Each entry gets an equal share of the width, so a narrow chart
+        // shortens names instead of running the last one off the edge.
+        const double share = (width() - plot.left()) / std::max<int>(1, int(m_series.size()));
         double x = plot.left();
         for (const auto& series : m_series) {
-            painter.setBrush(series.color);
-            painter.setPen(Qt::NoPen);
-            painter.drawLine(QPointF(x, 7), QPointF(x + 9, 7));
             painter.setPen(QPen(series.color, 1.6));
             painter.drawLine(QPointF(x, 7), QPointF(x + 9, 7));
             painter.setPen(palette::TextSecondary);
-            const QFontMetrics metrics(painter.font());
-            painter.drawText(QRectF(x + 13, 0, metrics.horizontalAdvance(series.name) + 4, 14),
-                             Qt::AlignLeft | Qt::AlignVCenter, series.name);
-            x += 13 + metrics.horizontalAdvance(series.name) + 14;
+            const int room = std::max(0, int(share) - 13 - 10);
+            const QString name = metrics.elidedText(series.name, Qt::ElideRight, room);
+            const int nameWidth = metrics.horizontalAdvance(name);
+            painter.drawText(QRectF(x + 13, 0, nameWidth + 4, 14), Qt::AlignLeft | Qt::AlignVCenter,
+                             name);
+            x += 13 + nameWidth + 14;
         }
     }
 
@@ -330,15 +335,32 @@ void DonutChart::paintEvent(QPaintEvent* event)
     }
 
     if (!m_centerValue.isEmpty()) {
+        // The figure must fit inside the hole: shrink it, and past a point
+        // write it compactly (76,920 -> 76.9k) rather than spill over the ring.
+        const double hole = std::max(10.0, diameter - 2 * thickness - 8);
+        QString value = m_centerValue;
+        bool isNumber = false;
+        const double number = m_centerValue.toDouble(&isNumber);
+        if (isNumber)
+            value = QLocale::system().toString(qlonglong(std::llround(number)));
         QFont font = painter.font();
-        font.setPointSizeF(11.0);
         font.setBold(true);
+        int pixels = 18;
+        font.setPixelSize(pixels);
+        while (pixels > 10 && QFontMetrics(font).horizontalAdvance(value) > hole) {
+            font.setPixelSize(--pixels);
+        }
+        if (isNumber && QFontMetrics(font).horizontalAdvance(value) > hole && number >= 1000)
+            value = number >= 1e6 ? QStringLiteral("%1M").arg(number / 1e6, 0, 'f', 1)
+                                  : QStringLiteral("%1k").arg(number / 1e3, 0, 'f', 1);
         painter.setFont(font);
         painter.setPen(palette::TextPrimary);
-        painter.drawText(ring.adjusted(0, -6, 0, -6), Qt::AlignCenter, m_centerValue);
+        const QRectF figure(ring.center().x() - hole / 2, ring.center().y() - pixels, hole, pixels + 2);
+        painter.drawText(figure, Qt::AlignHCenter | Qt::AlignBottom, value);
         painter.setFont(smallFont(painter));
         painter.setPen(palette::TextDim);
-        painter.drawText(ring.adjusted(0, 14, 0, 14), Qt::AlignCenter, m_centerCaption);
+        painter.drawText(QRectF(ring.center().x() - hole / 2, ring.center().y() + 3, hole, 14),
+                         Qt::AlignHCenter | Qt::AlignTop, m_centerCaption);
     }
 
     // Legend column to the right of the ring.
@@ -353,10 +375,12 @@ void DonutChart::paintEvent(QPaintEvent* event)
         painter.drawRoundedRect(QRectF(legendLeft, y + rowHeight / 2 - 4, 8, 8), 2, 2);
 
         painter.setPen(palette::TextSecondary);
-        const QString share =
-            QStringLiteral("%1 (%2%)")
-                .arg(std::llround(slice.value))
-                .arg(100.0 * slice.value / total, 0, 'f', 1);
+        // The share only: the count of each slice is the chart's total
+        // times it, and spelling it out squeezed the names to nothing.
+        const double percent = 100.0 * slice.value / total;
+        const QString share = percent >= 10 || percent == 0
+                                  ? QStringLiteral("%1%").arg(std::llround(percent))
+                                  : QStringLiteral("%1%").arg(percent, 0, 'f', 1);
         const double shareWidth = metrics.horizontalAdvance(share) + 4;
         const QRectF nameCell(legendLeft + 14, y, width() - legendLeft - 18 - shareWidth, rowHeight);
         painter.drawText(nameCell, Qt::AlignLeft | Qt::AlignVCenter,

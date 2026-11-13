@@ -17,7 +17,8 @@ int main(int argc, char* argv[])
     // Painted rather than shipped as an asset, so the window, taskbar, and
     // in-app brand mark can never drift apart.
     application.setWindowIcon(QIcon(aquatrack::ui::glyphPixmap(
-        aquatrack::ui::Glyph::Drop, 64, aquatrack::ui::palette::Accent, 2.4)));
+        aquatrack::ui::Glyph::Drop, 64, aquatrack::ui::palette::Accent,
+        aquatrack::ui::GlyphStyle::Duotone)));
     application.setApplicationVersion(QStringLiteral("0.1.0"));
 
     QCommandLineParser parser;

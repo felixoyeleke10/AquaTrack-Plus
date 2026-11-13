@@ -85,7 +85,11 @@ protected:
                                         : palette::TextSecondary;
         const QRectF iconBox((width() - kIconSize) / 2.0, (height() - kIconSize) / 2.0 + 1,
                              kIconSize, kIconSize);
-        aquatrack::ui::paintGlyph(painter, m_glyph, iconBox, colour);
+        // The current page's icon is duotone, in the accent: lit, not just white.
+        aquatrack::ui::paintGlyph(painter, m_glyph, iconBox,
+                                  m_active ? palette::AccentHover : colour,
+                                  m_active ? aquatrack::ui::GlyphStyle::Duotone
+                                           : aquatrack::ui::GlyphStyle::Regular);
     }
 
 private:
@@ -163,8 +167,7 @@ void NavigationDock::paintEvent(QPaintEvent*)
     painter.setPen(Qt::NoPen);
     painter.setBrush(palette::AccentSunken);
     painter.drawRoundedRect(mark, 5, 5);
-    aquatrack::ui::paintGlyph(painter, Glyph::Drop, mark.adjusted(3.5, 3.5, -3.5, -3.5),
-                              Qt::white, 1.8);
+    aquatrack::ui::paintGlyph(painter, Glyph::Drop, mark.adjusted(3, 3, -3, -3), Qt::white);
 
     QFont name = font();
     name.setPixelSize(12);

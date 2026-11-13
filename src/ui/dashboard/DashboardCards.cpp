@@ -71,7 +71,7 @@ void paintPoster(QPainter& painter, const QRectF& card, const QPixmap& poster, G
         const qreal size = std::min<qreal>(34, area.height() / 3);
         paintGlyph(painter, placeholder,
                    QRectF(area.center().x() - size / 2, area.center().y() - size / 2, size, size),
-                   placeholderTone, 1.4);
+                   placeholderTone);
     }
     // Hairline between picture and text.
     painter.fillRect(QRectF(area.left(), area.bottom() - 1, area.width(), 1), palette::LineSoft);
@@ -255,7 +255,7 @@ void MediaCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
         painter->setPen(Qt::NoPen);
         painter->setBrush(QColor(5, 6, 8, 190));
         painter->drawEllipse(mark);
-        paintGlyph(*painter, Glyph::Play, mark.adjusted(13, 12, -11, -12), Qt::white, 1.8);
+        paintGlyph(*painter, Glyph::Play, mark.adjusted(14, 13, -12, -13), Qt::white);
     }
 
     const qreal left = card.left() + 14;
@@ -323,7 +323,7 @@ void HeroBanner::paintEvent(QPaintEvent*)
         fill.setColorAt(1, palette::Surface);
         painter.fillRect(rect(), fill);
         paintGlyph(painter, Glyph::Drop, QRectF(width() - 300, -40, 320, 320),
-                   withAlpha(palette::Accent, 34), 1.0);
+                   withAlpha(palette::Accent, 46), GlyphStyle::Duotone);
     } else {
         // Frames side by side, a hairline apart, like a contact sheet.
         const int count = int(m_images.size());
@@ -403,7 +403,7 @@ void FramePreview::paintEvent(QPaintEvent*)
         painter.setPen(Qt::NoPen);
         painter.setBrush(QColor(5, 6, 8, 180));
         painter.drawEllipse(mark);
-        paintGlyph(painter, Glyph::Play, mark.adjusted(15, 13, -12, -13), Qt::white, 1.8);
+        paintGlyph(painter, Glyph::Play, mark.adjusted(16, 15, -14, -15), Qt::white);
     }
     painter.setPen(QPen(palette::LineSoft, 1));
     painter.setBrush(Qt::NoBrush);

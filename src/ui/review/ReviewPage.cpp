@@ -182,8 +182,6 @@ ReviewPage::ReviewPage(QWidget* parent)
         refreshHistoryState();
     });
     connect(m_insightPanel, &InsightPanel::mergeTracksRequested, this, &ReviewPage::mergeTracks);
-    connect(m_insightPanel, &InsightPanel::allEventsRequested, m_reviewPanel,
-            &ReviewPanel::showEventsTab);
     connect(m_reviewPanel, &ReviewPanel::timestampRequested, this, [this](qint64 milliseconds) {
         if (m_controller->isLoaded())
             m_controller->setFrame(frameForTimestamp(milliseconds));
@@ -815,9 +813,9 @@ void ReviewPage::rebuildAnalytics()
         m_reviewPanel->timeline()->setLanes({});
         m_reviewPanel->timeline()->setMarkers({});
         m_reviewPanel->timeline()->setLinks({});
-        m_insightPanel->setEvents({});
         m_insightPanel->setConfidenceSeries({}, 0.0);
-        m_insightPanel->setIdSwitch(std::nullopt, 0);
+        m_insightPanel->setQuality(0, 0, 0, 0);
+        m_insightPanel->setIdSwitches({});
         m_surveyPanel->setSpecies({});
         m_surveyPanel->setTotals({});
         return;
@@ -835,6 +833,25 @@ void ReviewPage::rebuildAnalytics()
     m_idSwitches = analytics::idSwitchCandidates(all);
 
     m_reviewPanel->setAnalytics(bins, summary, spans, m_frameRate);
+
+    // ---- Fish activity: per second, distinct tracks and detections ------
+    {
+        const int seconds = int(std::max<qint64>(1, (timestampFor(m_sequenceFrames) + 999) / 1000));
+        QVector<int> detections(seconds, 0);
+        std::vector<std::vector<domain::LocalTrackId>> tracksIn(static_cast<std::size_t>(seconds));
+        for (const auto& observation : all) {
+            const int second = int(std::clamp<qint64>(observation.timestampMs / 1000, 0, seconds - 1));
+            ++detections[second];
+            tracksIn[std::size_t(second)].push_back(observation.localTrackId);
+        }
+        QVector<int> tracks(seconds, 0);
+        for (int second = 0; second < seconds; ++second) {
+            auto& ids = tracksIn[std::size_t(second)];
+            std::sort(ids.begin(), ids.end());
+            tracks[second] = int(std::unique(ids.begin(), ids.end()) - ids.begin());
+        }
+        m_reviewPanel->activity()->setActivity(tracks, detections, int(summary.uniqueLocalTracks));
+    }
     m_reviewPanel->setTracksTable(spans);
     m_reviewPanel->setEventsTable(events);
 
@@ -902,11 +919,7 @@ void ReviewPage::rebuildAnalytics()
     }
     m_reviewPanel->timeline()->setMarkers(std::move(markers));
 
-    m_insightPanel->setEvents(events);
-    m_insightPanel->setIdSwitch(m_idSwitches.empty()
-                                    ? std::optional<analytics::IdSwitchCandidate>{}
-                                    : std::optional(m_idSwitches.front()),
-                                int(m_idSwitches.size()));
+    m_insightPanel->setIdSwitches(m_idSwitches);
 
     // Mean confidence per bin.
     std::map<std::size_t, std::pair<double, std::size_t>> perBin;
@@ -926,6 +939,19 @@ void ReviewPage::rebuildAnalytics()
     }
     m_insightPanel->setConfidenceSeries(
         confidence, confidence.isEmpty() ? 0.0 : confidence.last());
+
+    // Quality figures under the confidence chart.
+    double confidenceSum = 0.0;
+    std::size_t weak = 0;
+    std::size_t verified = 0;
+    for (const auto& observation : all) {
+        confidenceSum += observation.confidence;
+        weak += observation.confidence < 0.5F ? 1 : 0;
+        verified += observation.humanVerified ? 1 : 0;
+    }
+    const double observationCount = double(all.size());
+    m_insightPanel->setQuality(confidenceSum / observationCount, double(weak) / observationCount,
+                               double(verified) / observationCount, int(all.size()));
 
     // Species present, for the left-rail filter.
     QVector<QPair<int, QString>> species;
