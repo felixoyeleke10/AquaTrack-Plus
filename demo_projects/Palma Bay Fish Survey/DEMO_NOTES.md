@@ -6,7 +6,7 @@ Everything here is real data or real model output. Nothing is synthetic.
 
 SFISHTRACK dataset clips: GoPro Hero 3, about 10 m depth, Palma's bay,
 recorded 22 May 2021 (from the dataset's metadata files). The videos are
-copied into `media/` and played directly from the MP4 files.
+copied into `media/videos/` and played directly from the MP4 files.
 
 | Media | Frames | Boxes come from |
 |---|---|---|
@@ -41,5 +41,5 @@ In Review: open a video and press **Detect & track** (choose a model when
 asked), or **Import annotations** with a `gt.txt`. Or from a shell:
 
 ```powershell
-build\aquatrack-cli.exe project analyze "demo_projects\Palma Bay Fish Survey\Palma Bay Fish Survey.aqp" "demo_projects\Palma Bay Fish Survey\media\video_019.mp4" --model sfishtrack_15ep
+build\aquatrack-cli.exe project analyze "demo_projects\Palma Bay Fish Survey\Palma Bay Fish Survey.aqp" "demo_projects\Palma Bay Fish Survey\media\videos\video_019.mp4" --model sfishtrack_15ep
 ```

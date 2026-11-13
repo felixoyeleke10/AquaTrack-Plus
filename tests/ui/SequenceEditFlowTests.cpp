@@ -126,13 +126,13 @@ int main(int argc, char* argv[])
     // Three clips at 10 fps: a = frames 1-10, b = 11-15, c = 16-23.
     QVector<media::VideoInfo> clips;
     for (const auto& [name, frames] : {std::pair{"a", 10}, {"b", 5}, {"c", 8}}) {
-        const QString path = QDir(layout.media()).filePath(QStringLiteral("%1.mp4").arg(QLatin1String(name)));
+        const QString path = QDir(layout.videos()).filePath(QStringLiteral("%1.mp4").arg(QLatin1String(name)));
         requireTest(makeVideo(path, frames), "generate a clip");
         media::VideoInfo info;
         requireTest(media::probeVideo(path, info) && info.frameCount == frames, "probe a clip");
         clips.push_back(info);
     }
-    const QString sequence = QDir(layout.media()).filePath(QStringLiteral("Seq"));
+    const QString sequence = QDir(layout.sequences()).filePath(QStringLiteral("Seq"));
     media::VideoSequenceManifest manifest;
     manifest.name = QStringLiteral("Seq");
     manifest.clips = clips;
@@ -180,6 +180,20 @@ int main(int argc, char* argv[])
                 "the sequence is saved in its new order under its new name");
     requireTest(media::MediaSource::reviewIdFor(sequence) == QStringLiteral("Seq renamed"),
                 "the sequence is now known by its new name");
+
+    // ---- The folder explains itself ------------------------------------------
+    QFile guide(QDir(sequence).filePath(QStringLiteral("README.txt")));
+    requireTest(guide.open(QIODevice::ReadOnly | QIODevice::Text), "the sequence has a README");
+    const QString guideText = QString::fromUtf8(guide.readAll());
+    const qsizetype first = guideText.indexOf(QStringLiteral("1. c.mp4"));
+    const qsizetype second = guideText.indexOf(QStringLiteral("2. a.mp4"));
+    requireTest(guideText.startsWith(QStringLiteral("AquaTrack+ sequence: Seq renamed")),
+                "the README is titled with the sequence's current name");
+    requireTest(first >= 0 && second > first && !guideText.contains(QStringLiteral("b.mp4")),
+                "the README lists the clips in their new play order");
+    requireTest(guideText.contains(QStringLiteral("How to open it")) &&
+                    guideText.contains(QDir::toNativeSeparators(QStringLiteral("../../videos/a.mp4"))),
+                "the README says how to open the sequence and where its videos are");
 
     // ---- Annotations moved with their clips --------------------------------
     aquatrack::data::JsonObservationRepository store(

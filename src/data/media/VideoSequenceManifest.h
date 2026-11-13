@@ -23,6 +23,10 @@ namespace aquatrack::media {
 //                  "durationMs": 35602, "bytes": 72646371,
 //                  "modified": "2025-09-01T15:12:00Z" }, ... ]
 //   }
+//
+// Saving also writes README.txt beside it: the same clips for people, and
+// how to open the folder (unless a README.txt not written by AquaTrack+ is
+// already there).
 struct VideoSequenceManifest {
     QString name;
     // Absolute paths after load(); probe data may be stale until refresh().

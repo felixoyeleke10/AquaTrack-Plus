@@ -14,14 +14,22 @@ const char* const kReadme =
     "\n"
     "Open the .aqp file in AquaTrack+ to work on this project.\n"
     "\n"
-    "media/        Sequences and video files copied into the project. A BrackishMOT\n"
-    "              sequence is a folder holding seqinfo.ini, img1/ and gt/gt.txt.\n"
-    "annotations/  Your reviewed edits (observations.json) and MOTChallenge gt.txt\n"
-    "              exports.\n"
-    "models/       Detector weights with their model.json manifests. The Models page\n"
-    "              lists whatever is here.\n"
-    "exports/      CSV and other exports.\n"
-    "snapshots/    Frame snapshots saved from Review.\n"
+    "media/\n"
+    "  videos/       Video files copied into the project.\n"
+    "  sequences/    One folder per sequence. A sequence of videos holds\n"
+    "                sequence.json (its clips, in play order) and a README.txt\n"
+    "                saying how to open it; its videos stay in media/videos/.\n"
+    "                A BrackishMOT image sequence holds seqinfo.ini, img1/ and\n"
+    "                gt/gt.txt.\n"
+    "annotations/    Your reviewed edits (observations.json), imported ground\n"
+    "                truth, and detector output.\n"
+    "models/         Detector weights with their model.json manifests. The\n"
+    "                Models page lists whatever is here.\n"
+    "exports/        CSV and MOTChallenge exports.\n"
+    "snapshots/      Frame snapshots saved from Review.\n"
+    "\n"
+    "Add, rename and reorder media from inside AquaTrack+ (Dashboard or Videos\n"
+    "page) rather than in this folder: annotations are stored by media name.\n"
     "\n"
     "Paths inside this folder are stored relative to it, so the whole folder can be\n"
     "moved, copied or zipped and still open. Media linked from elsewhere is stored\n"
@@ -47,6 +55,15 @@ ProjectLayout::ProjectLayout(const QString& projectFile)
 }
 
 QString ProjectLayout::media() const { return m_root + QStringLiteral("/media"); }
+QString ProjectLayout::videos() const { return media() + QStringLiteral("/videos"); }
+QString ProjectLayout::sequences() const { return media() + QStringLiteral("/sequences"); }
+
+QString ProjectLayout::mediaFolderFor(const QString& source) const
+{
+    // A single video file goes with the other videos; anything that is a
+    // folder (an image sequence, a sequence of videos) is a sequence.
+    return QFileInfo(source).isDir() ? sequences() : videos();
+}
 QString ProjectLayout::annotations() const { return m_root + QStringLiteral("/annotations"); }
 QString ProjectLayout::models() const { return m_root + QStringLiteral("/models"); }
 QString ProjectLayout::exports() const { return m_root + QStringLiteral("/exports"); }
@@ -54,7 +71,8 @@ QString ProjectLayout::snapshots() const { return m_root + QStringLiteral("/snap
 
 bool ProjectLayout::create(QString* error) const
 {
-    for (const auto& folder : {media(), annotations(), models(), exports(), snapshots()}) {
+    for (const auto& folder :
+         {videos(), sequences(), annotations(), models(), exports(), snapshots()}) {
         if (!QDir().mkpath(folder)) {
             if (error)
                 *error = QStringLiteral("Could not create %1").arg(QDir::toNativeSeparators(folder));

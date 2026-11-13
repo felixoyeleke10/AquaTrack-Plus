@@ -3,6 +3,8 @@
 #include "data/media/MediaTools.h"
 
 #include <QDir>
+#include <QTextStream>
+#include <QLocale>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -33,6 +35,61 @@ QString storedPath(const QDir& folder, const QString& absolute)
     if (relative.startsWith(QLatin1String("../../../")))
         return QDir::fromNativeSeparators(absolute);
     return relative;
+}
+
+// First line of the README this class writes. A README.txt that does not
+// start with it was written by someone else and is left alone.
+constexpr char kGuideMarker[] = "AquaTrack+ sequence: ";
+
+// Human-readable companion to sequence.json: what the folder is, how to
+// open it, and the clips in play order.
+QString guideText(const VideoSequenceManifest& manifest, const QDir& base)
+{
+    const QLocale locale = QLocale::c();
+    QString text;
+    QTextStream out(&text);
+    const QString title = QString::fromLatin1(kGuideMarker) + manifest.name;
+    out << title << "\n" << QString(title.size(), QLatin1Char('=')) << "\n\n";
+    out << "This folder is a sequence: " << manifest.clips.size()
+        << (manifest.clips.size() == 1 ? " video" : " videos")
+        << " that AquaTrack+ plays back to back as one timeline ("
+        << locale.toString(manifest.totalFrames()) << " frames, "
+        << formatDuration(manifest.totalDurationMs()) << ").\n\n";
+    out << "How to open it\n"
+        << "  - Open the project (.aqp) in AquaTrack+, then choose \"" << manifest.name
+        << "\" on the Dashboard or the Videos page.\n"
+        << "  - Or, without the project: Dashboard > Open media..., and pick the\n"
+        << "    sequence.json in this folder.\n"
+        << "  A media player opens the videos one at a time only; this folder is\n"
+        << "  what joins them.\n\n";
+    out << "Play order\n";
+    int index = 1;
+    for (const auto& clip : manifest.clips) {
+        out << "  " << index++ << ". " << QFileInfo(clip.path).fileName() << "   "
+            << formatDuration(clip.durationMs) << "   " << locale.toString(clip.frameCount)
+            << " frames   " << QString::number(clip.frameRate, 'f', 2) << " fps\n"
+            << "     " << QDir::toNativeSeparators(storedPath(base, clip.path)) << "\n";
+    }
+    out << "\nThe videos are referenced, not copied: keep them where the paths above\n"
+        << "point (paths are relative to this folder). To change the order, add or\n"
+        << "remove clips, use Edit sequence... in AquaTrack+ rather than editing\n"
+        << "sequence.json by hand, so annotations move with their clips.\n";
+    return text;
+}
+
+void writeGuide(const VideoSequenceManifest& manifest, const QString& folder)
+{
+    const QString path = QDir(folder).filePath(QStringLiteral("README.txt"));
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly) &&
+        !existing.readLine().startsWith(QByteArray(kGuideMarker)))
+        return;
+    existing.close();
+    QSaveFile file(path);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        file.write(guideText(manifest, QDir(folder)).toUtf8());
+        (void)file.commit();  // the guide is a courtesy; never fail a save over it
+    }
 }
 
 }  // namespace
@@ -128,6 +185,7 @@ bool VideoSequenceManifest::save(const QString& folder, QString* error) const
                             .arg(QDir::toNativeSeparators(file.fileName()), file.errorString()));
         return false;
     }
+    writeGuide(*this, folder);
     return true;
 }
 

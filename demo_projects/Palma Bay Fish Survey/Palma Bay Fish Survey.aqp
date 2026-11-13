@@ -2,13 +2,13 @@
     "createdAtMs": 1794519573983,
     "database": "annotations/observations.json",
     "media": [
-        "media/video_019.mp4",
-        "media/video_045.mp4",
-        "media/video_046.mp4",
-        "media/video_047.mp4",
-        "media/video_048.mp4",
-        "media/brackishMOT-36",
-        "media/Transect 045-048"
+        "media/videos/video_019.mp4",
+        "media/videos/video_045.mp4",
+        "media/videos/video_046.mp4",
+        "media/videos/video_047.mp4",
+        "media/videos/video_048.mp4",
+        "media/sequences/brackishMOT-36",
+        "media/sequences/Transect 045-048"
     ],
     "name": "Palma Bay Fish Survey",
     "projectId": "71f2d8cc-6f5b-44d1-97ad-17c81b9f5b6e",

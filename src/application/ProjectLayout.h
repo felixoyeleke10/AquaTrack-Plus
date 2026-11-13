@@ -9,7 +9,10 @@ namespace aquatrack::application {
 //   <Name>/
 //     <Name>.aqp      the manifest
 //     README.txt      what each folder is for
-//     media/          sequences and video files copied into the project
+//     media/
+//       videos/       video files copied into the project
+//       sequences/    one folder per sequence (sequence.json + README.txt,
+//                     or a BrackishMOT seqinfo.ini/img1/gt)
 //     annotations/    reviewed edits (observations.json) and MOT gt.txt
 //     models/         detector weights and model.json manifests
 //     exports/        CSV and other exports
@@ -23,6 +26,11 @@ public:
 
     [[nodiscard]] QString root() const { return m_root; }
     [[nodiscard]] QString media() const;
+    [[nodiscard]] QString videos() const;
+    [[nodiscard]] QString sequences() const;
+    // Where a copy of `source` belongs: videos/ for a file, sequences/ for
+    // a sequence folder.
+    [[nodiscard]] QString mediaFolderFor(const QString& source) const;
     [[nodiscard]] QString annotations() const;
     [[nodiscard]] QString models() const;
     [[nodiscard]] QString exports() const;

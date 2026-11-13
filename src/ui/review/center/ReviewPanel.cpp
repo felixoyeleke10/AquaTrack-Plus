@@ -172,11 +172,11 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     m_trackTable->horizontalHeaderItem(2)->setToolTip(QStringLiteral("First frame the track is seen"));
     m_trackTable->horizontalHeaderItem(3)->setToolTip(QStringLiteral("Last frame the track is seen"));
     m_trackTable->horizontalHeaderItem(4)->setToolTip(QStringLiteral("Boxes recorded for the track"));
-    // Every column fits its heading and values, so none is ever cut short;
-    // the last takes any spare width (its figures stay right-aligned).
-    for (int column = 0; column < 5; ++column)
+    // The figures fit their headings and values, so none is ever cut short;
+    // Species takes the spare width, keeping the figures together on the right.
+    for (int column : {0, 2, 3, 4, 5})
         m_trackTable->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
-    m_trackTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
+    m_trackTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_trackTable->setToolTip(QStringLiteral("Click a track to go to its first frame"));
     connect(m_trackTable, &QTableWidget::cellClicked, this, [this](int row, int) {
         if (auto* item = m_trackTable->item(row, 2))
@@ -541,6 +541,9 @@ void ReviewPanel::setTracksTable(const std::vector<analytics::TrackSpan>& spans)
         m_trackTable->setItem(row, 4, numberCell(locale.toString(qulonglong(span.observations))));
         m_trackTable->setItem(row, 5, numberCell(shortClock(span.durationMs())));
     }
+    // A new list starts at its top (longest track first), wherever the
+    // previous one had been scrolled to.
+    m_trackTable->scrollToTop();
     m_tabs->setTabText(0, QStringLiteral("Tracks (%1)").arg(locale.toString(qulonglong(spans.size()))));
 }
 

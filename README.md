@@ -54,7 +54,8 @@ Review opens three kinds of media, all on one frame-numbered timeline:
   (`winget install Gyan.FFmpeg`).
 - **Sequences**: select several videos on the Videos page and choose
   *New sequence*. The videos are referenced, not converted; a
-  `sequence.json` in `media/<name>/` lists them in play order. Double-click a
+  `sequence.json` in `media/sequences/<name>/` lists them in play order, beside a
+  README.txt saying how to open it. Double-click a
   sequence to browse its clips; double-click a clip to open Review there.
 - Existing **BrackishMOT sequences** (`seqinfo.ini`, `img1/`, `gt/gt.txt`) open the same way; a sequence is a sequence whether its frames are stored as video or as images.
 

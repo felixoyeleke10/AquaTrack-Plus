@@ -161,7 +161,7 @@ int main(int argc, char* argv[])
                     "the project file on disk lists the sequences");
         // Copied into the project: inside media/, stored relative on disk.
         const QString mediaFolder =
-            QDir::cleanPath(QDir(projectsDir).filePath(QStringLiteral("Survey/media")));
+            QDir::cleanPath(QDir(projectsDir).filePath(QStringLiteral("Survey/media/sequences")));
         for (const auto& path : saved.mediaPaths)
             requireTest(QString::fromStdString(path).startsWith(mediaFolder + QLatin1Char('/')) &&
                             QFileInfo::exists(QString::fromStdString(path) +
@@ -169,9 +169,10 @@ int main(int argc, char* argv[])
                         "sequences are copied into the project's media folder");
         QFile manifest(projects->projectPath());
         requireTest(manifest.open(QIODevice::ReadOnly) &&
-                        manifest.readAll().contains("\"media/seq-a\""),
+                        manifest.readAll().contains("\"media/sequences/seq-a\""),
                     "media inside the project is stored relative");
-        for (const char* folder : {"annotations", "models", "exports", "snapshots"})
+        for (const char* folder : {"media/videos", "media/sequences", "annotations", "models",
+                                   "exports", "snapshots"})
             requireTest(QDir(QDir(projectsDir).filePath(QStringLiteral("Survey/") +
                                                         QLatin1String(folder)))
                             .exists(),

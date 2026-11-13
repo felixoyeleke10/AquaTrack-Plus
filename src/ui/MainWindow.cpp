@@ -958,7 +958,7 @@ QString MainWindow::sequenceNameProblem(const QString &name,
   if (exceptPath.isEmpty()) {
     const aquatrack::application::ProjectLayout layout(m_projectController->projectPath());
     const QString folder =
-        QDir(layout.media()).filePath(aquatrack::application::ProjectLayout::folderNameFor(name));
+        QDir(layout.sequences()).filePath(aquatrack::application::ProjectLayout::folderNameFor(name));
     if (QFileInfo::exists(folder))
       return QStringLiteral("The project's media folder already has '%1'.")
           .arg(QFileInfo(folder).fileName());
@@ -1034,7 +1034,7 @@ void MainWindow::createVideoSequence(const QStringList &selectedVideos) {
   const QString name = dialog.name();
   const aquatrack::application::ProjectLayout layout(m_projectController->projectPath());
   const QString folder =
-      QDir(layout.media()).filePath(aquatrack::application::ProjectLayout::folderNameFor(name));
+      QDir(layout.sequences()).filePath(aquatrack::application::ProjectLayout::folderNameFor(name));
   aquatrack::media::VideoSequenceManifest manifest;
   manifest.name = name;
   manifest.clips = dialog.clips();
@@ -1324,8 +1324,9 @@ QStringList MainWindow::copyIntoProject(const QStringList &sources) {
   if (sources.isEmpty() || !m_projectController->project())
     return copies;
   const aquatrack::application::ProjectLayout layout(m_projectController->projectPath());
-  const QString media = layout.ensure(layout.media());
-  if (media.isEmpty()) {
+  // Videos and sequences each have their own folder under media/.
+  const QString media = layout.ensure(layout.videos());
+  if (media.isEmpty() || layout.ensure(layout.sequences()).isEmpty()) {
     QMessageBox::warning(this, QStringLiteral("Could not copy media"),
                          QStringLiteral("Could not create %1")
                              .arg(QDir::toNativeSeparators(layout.media())));
@@ -1366,8 +1367,17 @@ QStringList MainWindow::copyIntoProject(const QStringList &sources) {
   for (const auto &source : sources) {
     QString copied;
     QString error;
-    const auto result = importer.copy(source, media, &copied, &error);
+    const auto result = importer.copy(source, layout.mediaFolderFor(source), &copied, &error);
     if (result == aquatrack::application::MediaImporter::Result::Copied) {
+      // A sequence of videos references its clips by paths relative to its
+      // own folder; copied byte for byte they would point at the wrong
+      // place. Re-save it from the original so the paths are recomputed for
+      // the copy (and its README describes it).
+      if (aquatrack::media::classifyMedia(source) == aquatrack::media::MediaKind::VideoSequence) {
+        aquatrack::media::VideoSequenceManifest manifest;
+        if (manifest.load(source))
+          (void)manifest.save(copied);
+      }
       copies << copied;
     } else if (result == aquatrack::application::MediaImporter::Result::Cancelled) {
       statusBar()->showMessage(QStringLiteral("Copy cancelled; %1 item(s) were copied")
