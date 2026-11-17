@@ -184,7 +184,8 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent) {
   m_nms->setSingleStep(.05);
   m_inputSize = fixedWidth(new QSpinBox(this));
   m_inputSize->setObjectName(QStringLiteral("inputSize"));
-  m_inputSize->setRange(160, 2560);
+  // The range the settings file accepts (see isValid).
+  m_inputSize->setRange(256, 4096);
   m_inputSize->setSingleStep(32);
   m_inputSize->setSuffix(QStringLiteral(" px"));
   addCategory(

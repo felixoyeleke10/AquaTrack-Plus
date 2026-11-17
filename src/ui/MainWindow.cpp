@@ -596,6 +596,7 @@ MainWindow::MainWindow(QWidget *parent)
     updated.detection.modelId = m_settingsController->settings().detection.modelId;
     updated.storage.recentProjects =
         m_settingsController->settings().storage.recentProjects;
+    updated.layout = m_settingsController->settings().layout;
     if (!m_settingsController->save(updated, &error)) {
       QMessageBox::warning(m_settingsWindow->isVisible() ? static_cast<QWidget *>(m_settingsWindow)
                                                          : this,
@@ -627,6 +628,9 @@ MainWindow::MainWindow(QWidget *parent)
   if (!m_settingsController->load(&settingsError))
     statusBar()->showMessage(
         QStringLiteral("Settings warning: %1").arg(settingsError));
+  // Panel heights from last session; saved again when the window closes.
+  m_review->setPanelHeights({m_settingsController->settings().layout.reviewActivityHeight,
+                             m_settingsController->settings().layout.reviewLogHeight});
 
   connect(m_appState, &aquatrack::application::AppState::currentPageChanged,
           this, [this](Page page) {
@@ -748,7 +752,21 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     return;
   }
   recordReviewSession();
+  rememberLayout();
   event->accept();
+}
+
+void MainWindow::rememberLayout() {
+  // Saved on close, not on every drag: saving settings refreshes pages.
+  const auto heights = m_review->panelHeights();
+  auto updated = m_settingsController->settings();
+  if (updated.layout.reviewActivityHeight == heights.activity &&
+      updated.layout.reviewLogHeight == heights.log)
+    return;
+  updated.layout.reviewActivityHeight = heights.activity;
+  updated.layout.reviewLogHeight = heights.log;
+  QString ignored;
+  (void)m_settingsController->save(updated, &ignored);
 }
 
 bool MainWindow::reviewSequence(const QString &directory) {

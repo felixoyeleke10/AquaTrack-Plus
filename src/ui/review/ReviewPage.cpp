@@ -1233,6 +1233,16 @@ bool ReviewPage::applyDetections(const media::MediaSource& media,
     return true;
 }
 
+ReviewPanel::PanelHeights ReviewPage::panelHeights() const
+{
+    return m_reviewPanel->panelHeights();
+}
+
+void ReviewPage::setPanelHeights(ReviewPanel::PanelHeights heights)
+{
+    m_reviewPanel->setPanelHeights(heights);
+}
+
 void ReviewPage::logStatus(const QString& message)
 {
     if (message.trimmed().isEmpty())

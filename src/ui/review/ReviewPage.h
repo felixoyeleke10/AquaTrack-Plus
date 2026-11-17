@@ -87,6 +87,9 @@ public:
     void startAnalysis(aquatrack::application::AnalysisRequest request);
     [[nodiscard]] bool isAnalysisRunning() const;
     void cancelAnalysis();
+    // Heights of Fish activity and Log / Events, remembered between sessions.
+    [[nodiscard]] ReviewPanel::PanelHeights panelHeights() const;
+    void setPanelHeights(ReviewPanel::PanelHeights heights);
     // Adds an app status message to the Review page's log.
     void logStatus(const QString& message);
     // The detectors Detect & track can use, and the one it will use.

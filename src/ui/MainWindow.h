@@ -83,6 +83,8 @@ private:
   // Resolves the active detector and Python, then runs detection + tracking
   // over the media open in Review.
   void runAnalysis();
+  // Saves layout the user dragged (Review's panel heights) for next time.
+  void rememberLayout();
   // Shows the settings window with the current settings (or raises it).
   void openSettings();
   // Detectors Detect & track can run, and the one it will: the open

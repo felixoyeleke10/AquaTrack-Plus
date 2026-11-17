@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "data/SettingsStore.h"
 #include <QCoreApplication>
+#include <QFile>
 #include <QTemporaryDir>
 #include <string>
 int main(int argc, char *argv[]) {
@@ -40,5 +41,36 @@ int main(int argc, char *argv[]) {
   recents.storage.recentProjects.push_back("D:/surveys/overflow.aqp");
   requireTest(!aquatrack::system::settings::isValid(recents),
               "an over-long recent list is rejected");
+
+  // Review's panel heights round-trip, collapsed included.
+  aquatrack::system::settings::AquaTrackSettings layout;
+  requireTest(layout.layout.reviewLogHeight == 200 && layout.layout.reviewActivityHeight == 200,
+              "the panels start at 200 px");
+  for (int height : {340, 0}) {
+    layout.layout.reviewLogHeight = height;
+    layout.layout.reviewActivityHeight = height + 20;
+    requireTest(store.save(path, layout, &error), "save the panel heights");
+    aquatrack::system::settings::AquaTrackSettings back;
+    requireTest(store.load(path, back, &error) && back.layout.reviewLogHeight == height &&
+                    back.layout.reviewActivityHeight == height + 20,
+                "the panel heights round-trip");
+  }
+  // A hand-edited, out-of-range height is brought into range; it does not
+  // make the whole settings file unreadable.
+  {
+    QFile file(path);
+    requireTest(file.open(QIODevice::ReadOnly), "read settings back");
+    QByteArray json = file.readAll();
+    file.close();
+    json.replace("\"reviewLogHeight\": 0", "\"reviewLogHeight\": -50");
+    requireTest(json.contains("-50"), "the height was edited");
+    requireTest(file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                    file.write(json) == json.size(),
+                "write an out-of-range height");
+    file.close();
+    aquatrack::system::settings::AquaTrackSettings clamped;
+    requireTest(store.load(path, clamped, &error) && clamped.layout.reviewLogHeight == 0,
+                "an out-of-range height is clamped");
+  }
   return 0;
 }

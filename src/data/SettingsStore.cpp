@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <algorithm>
 namespace {
 void setError(QString *e, const QString &m) {
   if (e)
@@ -54,7 +55,9 @@ bool SettingsStore::save(const QString &path,
            {"tracker", QString::fromStdString(s.analysis.tracker)}}},
       {"appearance",
        QJsonObject{{"theme", QString::fromStdString(s.appearance.theme)},
-                   {"interfaceScale", s.appearance.interfaceScale}}}};
+                   {"interfaceScale", s.appearance.interfaceScale}}},
+      {"layout", QJsonObject{{"reviewActivityHeight", s.layout.reviewActivityHeight},
+                             {"reviewLogHeight", s.layout.reviewLogHeight}}}};
   QSaveFile file(path);
   if (!file.open(QIODevice::WriteOnly)) {
     setError(error, file.errorString());
@@ -141,6 +144,15 @@ bool SettingsStore::load(const QString &path,
           .toStdString();
   candidate.appearance.interfaceScale =
       a["interfaceScale"].toDouble(candidate.appearance.interfaceScale);
+  // Layout is a convenience: an odd value is brought into range rather
+  // than rejecting the whole settings file.
+  const auto l = root["layout"].toObject();
+  candidate.layout.reviewActivityHeight =
+      std::clamp(l["reviewActivityHeight"].toInt(candidate.layout.reviewActivityHeight), 0,
+                 system::settings::MaxReviewPanelHeight);
+  candidate.layout.reviewLogHeight =
+      std::clamp(l["reviewLogHeight"].toInt(candidate.layout.reviewLogHeight), 0,
+                 system::settings::MaxReviewPanelHeight);
   std::string reason;
   if (!system::settings::isValid(candidate, &reason)) {
     setError(error, QString::fromStdString(reason));

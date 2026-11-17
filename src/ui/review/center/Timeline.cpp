@@ -144,9 +144,11 @@ qreal TrackLanes::lanePitch() const
 {
     if (m_lanes.isEmpty())
         return idealPitch();
-    // Whatever height the layout actually granted, shared between lanes.
+    // Whatever height the pane has, shared between lanes: every row always
+    // fits, hairline-thin for a crowded sequence (an overview; make the
+    // pane taller for detail) rather than running off the bottom.
     const qreal available = std::max(0, height() - kPinRow - kAxis);
-    return std::max(2.0, std::min(idealPitch(), available / std::max(1, m_rows)));
+    return std::max(0.5, std::min(idealPitch(), available / std::max(1, m_rows)));
 }
 
 QSize TrackLanes::sizeHint() const
@@ -176,7 +178,9 @@ QRectF TrackLanes::laneRect(int index) const
 {
     const auto area = plot();
     const qreal pitch = lanePitch();
-    const qreal bar = pitch >= 10.0 ? pitch - 6.0 : std::max(2.0, pitch - 1.0);
+    const qreal bar = pitch >= 10.0 ? pitch - 6.0
+                      : pitch >= 3.0  ? pitch - 1.0
+                                      : std::max(0.8, pitch);  // packed rows touch
     const int row = index >= 0 && index < m_rowOfLane.size() ? m_rowOfLane[index] : index;
     const qreal top = area.top() + row * pitch + (pitch - bar) / 2.0;
     return QRectF(area.left(), top, area.width(), bar);

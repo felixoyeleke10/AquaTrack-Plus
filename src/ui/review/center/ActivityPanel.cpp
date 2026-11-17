@@ -96,8 +96,10 @@ public:
         setProperty("role", "bare");
         setMouseTracking(true);
         setCursor(Qt::PointingHandCursor);
-        setFixedHeight(86);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        // Room for the time bubble, a band and the axis; it grows with
+        // the pane, the band taking the extra height.
+        setMinimumHeight(72);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
     void setSeries(const QVector<int>& values, const QString& unit)
@@ -234,7 +236,8 @@ protected:
     }
 
 private:
-    QRectF bar() const { return QRectF(8, 28, width() - 16, 38); }
+    // The heat band: under the time bubble, above the axis labels.
+    QRectF bar() const { return QRectF(8, 28, width() - 16, std::max(20, height() - 28 - 22)); }
 
     qint64 timeAt(double x) const
     {
@@ -355,7 +358,7 @@ ActivityPanel::ActivityPanel(QWidget* parent) : QWidget(parent)
     m_views->addWidget(m_strip);
     m_lanes = new TrackLanes(m_views);
     m_views->addWidget(m_lanes);
-    column->addWidget(m_views);
+    column->addWidget(m_views, 1);
 
     // ---- Legend.
     m_legend = new QWidget(this);
@@ -434,6 +437,14 @@ void ActivityPanel::applyMode()
                         : detections ? QStringLiteral("Detections per second")
                                      : QStringLiteral("Detection density (tracks per second)"));
     m_views->setCurrentIndex(lanes ? 1 : 0);
+    // A stack asks for its largest page, shown or not; with thousands of
+    // tracks the hidden lanes would inflate the card. Only the visible
+    // view counts.
+    for (int index = 0; index < m_views->count(); ++index)
+        m_views->widget(index)->setSizePolicy(
+            QSizePolicy::Expanding, index == m_views->currentIndex() ? QSizePolicy::Expanding
+                                                                     : QSizePolicy::Ignored);
+    m_views->updateGeometry();
     m_legend->setVisible(!lanes);
     m_strip->setSeries(series, unit);
 

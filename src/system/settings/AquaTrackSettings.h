@@ -46,6 +46,13 @@ struct AppearanceSettings {
   std::string theme = "dark";
   double interfaceScale = 1.0;
 };
+// Window layout the user chose by dragging, restored next session.
+struct LayoutSettings {
+  // The Review page's panels under the picture, in pixels; 0 = collapsed.
+  int reviewActivityHeight = 200;
+  int reviewLogHeight = 200;
+};
+inline constexpr int MaxReviewPanelHeight = 4000;
 struct AquaTrackSettings {
   VideoSettings video;
   DetectionSettings detection;
@@ -55,6 +62,7 @@ struct AquaTrackSettings {
   ExportSettings exportSettings;
   AnalysisSettings analysis;
   AppearanceSettings appearance;
+  LayoutSettings layout;
 };
 [[nodiscard]] bool isValid(const AquaTrackSettings &,
                            std::string *reason = nullptr);

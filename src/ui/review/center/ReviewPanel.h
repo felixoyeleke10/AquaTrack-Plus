@@ -7,12 +7,15 @@
 
 #include <QWidget>
 
+#include <optional>
+
 class QActionGroup;
 class ElidedLabel;
 class QLabel;
 class QProgressBar;
 class QPushButton;
 class QSlider;
+class QSplitter;
 class QTableWidget;
 class QStackedWidget;
 class QTabBar;
@@ -60,6 +63,14 @@ public:
     void setPlaying(bool playing);
     void setEventsTable(const std::vector<aquatrack::analytics::SurveyEvent>& events);
     void clearAnalytics();
+    // Heights of the panels under the picture (0 = collapsed). Applied once
+    // the panel has been laid out, so they are absolute, not shares.
+    struct PanelHeights {
+        int activity = 200;
+        int log = 200;
+    };
+    [[nodiscard]] PanelHeights panelHeights() const;
+    void setPanelHeights(PanelHeights heights);
 
 signals:
     void playToggled();
@@ -72,11 +83,14 @@ signals:
     void importAnnotationsRequested();
     void analyzeRequested();
     void analysisCancelRequested();
+    // The reviewer dragged a panel's edge.
+    void panelHeightsChanged();
     void detectorChosen(QString modelId);
     void manageModelsRequested();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     // Narrow windows: icon-only Import, a shorter Detect, no source pill,
@@ -117,6 +131,9 @@ private:
     QLabel* m_frameCounter = nullptr;
     void showClock(int frame, int total, qint64 timeMs);
 
+    QSplitter* m_logSplit = nullptr;      // picture | activity | log
+    std::optional<PanelHeights> m_pendingHeights;  // to apply once laid out
+    void applyPanelHeights();
     QTabBar* m_tabs = nullptr;            // Log | Events
     QStackedWidget* m_tabPages = nullptr;  // their pages
     LogView* m_log = nullptr;

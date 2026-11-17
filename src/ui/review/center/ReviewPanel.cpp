@@ -158,7 +158,7 @@ public:
         : QSplitterHandle(orientation, parent)
     {
         setAttribute(Qt::WA_Hover);
-        setToolTip(QStringLiteral("Drag to resize the log; drag to the bottom to hide it"));
+        setToolTip(QStringLiteral("Drag to resize; drag all the way to hide the panel"));
     }
 
 protected:
@@ -202,6 +202,9 @@ public:
 protected:
     QSplitterHandle* createHandle() override { return new GripHandle(orientation(), this); }
 };
+
+constexpr int kDefaultActivityHeight = 200;
+constexpr int kDefaultLogHeight = 200;
 
 // HH:MM:SS:FF, the frame within its second, as editing software shows it.
 QString timecode(qint64 milliseconds, int frameRate)
@@ -277,22 +280,16 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // a large frame, auditing tracks wants a large table. A splitter lets the
     // reviewer decide, and stops the transport bar being squeezed out when
     // the window is short.
-    // Top: the picture and the fish activity under it. Bottom: Log and
-    // Events. The handle sits right on the log's top edge, where a reviewer
-    // reaches for it.
+    // Three panes, each with a handle on its top edge: the picture, the
+    // fish activity, then Log and Events.
     auto* split = new GripSplitter(Qt::Vertical, this);
+    m_logSplit = split;
     split->setObjectName(QStringLiteral("reviewSplit"));
     split->setHandleWidth(10);
     column->addWidget(split);
 
-    auto* upper = new QWidget(split);
-    upper->setProperty("role", "bare");
-    auto* upperColumn = new QVBoxLayout(upper);
-    upperColumn->setContentsMargins(0, 0, 0, 0);
-    upperColumn->setSpacing(8);
-
     // ---- Canvas ------------------------------------------------------
-    auto* canvasCard = card(upper);
+    auto* canvasCard = card(split);
     auto* canvasBody = new QVBoxLayout(canvasCard);
     canvasBody->setContentsMargins(1, 1, 1, 1);
     canvasBody->setSpacing(0);
@@ -304,10 +301,11 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // never claims less than its parts need, so a short window cannot
     // squeeze the frame under the transport.
     canvasCard->setMinimumHeight(238);
-    upperColumn->addWidget(canvasCard, 1);
+    split->addWidget(canvasCard);
 
     // ---- Sequence timeline -------------------------------------------
-    auto* timelineCard = card(upper);
+    auto* timelineCard = card(split);
+    timelineCard->setObjectName(QStringLiteral("activityCard"));
     auto* timelineBody = new QVBoxLayout(timelineCard);
     timelineBody->setContentsMargins(14, 10, 14, 8);
     timelineBody->setSpacing(4);
@@ -318,13 +316,13 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     m_timeline = m_activity->lanes();
     connect(m_timeline, &TrackLanes::frameRequested, this, &ReviewPanel::frameRequested);
     connect(m_activity, &ActivityPanel::timestampRequested, this, &ReviewPanel::timestampRequested);
-    timelineBody->addWidget(m_activity);
+    // The strip (or the lanes) takes whatever height the pane is given.
+    timelineBody->addWidget(m_activity, 1);
 
     m_filmstrip = new Filmstrip(timelineCard);
     connect(m_filmstrip, &Filmstrip::frameRequested, this, &ReviewPanel::frameRequested);
     timelineBody->addWidget(m_filmstrip);
-    upperColumn->addWidget(timelineCard);
-    split->addWidget(upper);
+    split->addWidget(timelineCard);
 
     // ---- Log and events ----------------------------------------------
     auto* tabCard = card(split);
@@ -379,15 +377,59 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     tabCard->setMinimumHeight(96);
     split->addWidget(tabCard);
 
-    // The picture is never hidden; the log can be, by dragging it down.
+    // The picture is never hidden; the activity and the log can be, by
+    // dragging their edge all the way.
     split->setCollapsible(0, false);
     split->setCollapsible(1, true);
-    // A taller window grows the picture, not the log.
+    split->setCollapsible(2, true);
+    // A taller window grows the picture, not the panels under it.
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
-    // The log starts readable (about ten lines), not squeezed to its minimum,
-    // so the handle can move both ways from the start.
-    split->setSizes({1000, 200});
+    split->setStretchFactor(2, 0);
+    // Readable from the start, so every handle can move both ways. Saved
+    // heights replace these once settings load (setPanelHeights).
+    split->setSizes({1000, kDefaultActivityHeight, kDefaultLogHeight});
+    // Only drags emit splitterMoved; restoring heights does not.
+    connect(split, &QSplitter::splitterMoved, this, &ReviewPanel::panelHeightsChanged);
+}
+
+ReviewPanel::PanelHeights ReviewPanel::panelHeights() const
+{
+    // Heights not yet applied (the page has not been laid out) are still
+    // the ones to keep.
+    if (m_pendingHeights)
+        return *m_pendingHeights;
+    const auto sizes = m_logSplit->sizes();
+    if (sizes.size() < 3)
+        return {};
+    return {sizes.at(1), sizes.at(2)};
+}
+
+void ReviewPanel::setPanelHeights(PanelHeights heights)
+{
+    heights.activity = std::max(0, heights.activity);
+    heights.log = std::max(0, heights.log);
+    m_pendingHeights = heights;
+    applyPanelHeights();
+}
+
+void ReviewPanel::applyPanelHeights()
+{
+    if (!m_pendingHeights)
+        return;
+    const auto sizes = m_logSplit->sizes();
+    if (sizes.size() < 3)
+        return;
+    const int total = sizes.at(0) + sizes.at(1) + sizes.at(2);
+    // Until the splitter is on screen its size is a placeholder (built,
+    // or laid out on a hidden page), and heights applied then are squeezed
+    // to the minimum; wait until it is shown at its real size.
+    if (!m_logSplit->isVisible() || total <= 0)
+        return;
+    const int activity = std::min(m_pendingHeights->activity, total);
+    const int log = std::min(m_pendingHeights->log, total - activity);
+    m_logSplit->setSizes({total - activity - log, activity, log});
+    m_pendingHeights.reset();
 }
 
 QWidget* ReviewPanel::buildHeader()
@@ -585,10 +627,18 @@ void ReviewPanel::updateDetectorButton()
     m_detector->updateGeometry();
 }
 
+void ReviewPanel::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    applyPanelHeights();
+}
+
 void ReviewPanel::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     setCompactHeader(width() < 820);
+    // Heights saved last session go in at the first real layout.
+    applyPanelHeights();
     // A narrow transport keeps step and play; Home and End still jump.
     const bool narrow = width() < 600;
     if (!m_transport.isEmpty()) {
