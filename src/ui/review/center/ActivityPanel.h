@@ -10,6 +10,9 @@ class QLabel;
 class QStackedWidget;
 
 class ActivityStrip;
+namespace aquatrack::ui {
+class SectionHeader;
+}
 
 // The sequence timeline under the frame: how busy the water is, second by
 // second, as a heat strip from quiet (violet) to busy (red), with the
@@ -31,8 +34,14 @@ public:
 
     [[nodiscard]] aquatrack::ui::TrackLanes* lanes() const { return m_lanes; }
 
+    // Folded to its header line (with a one-line summary), as in VS Code.
+    [[nodiscard]] bool isFolded() const { return m_folded; }
+    void setFolded(bool folded);
+
 signals:
     void timestampRequested(qint64 milliseconds);
+    // The reviewer folded or unfolded the panel from its header.
+    void foldToggled(bool folded);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -43,7 +52,13 @@ private:
     // figures and the strip stay readable.
     void setCompact(bool compact);
 
-    QLabel* m_subtitle = nullptr;
+    aquatrack::ui::SectionHeader* m_header = nullptr;
+    QLabel* m_subtitle = nullptr;  // the header's detail: subtitle, or summary when folded
+    QString m_subtitleText;
+    QString m_summaryText;
+    QList<QWidget*> m_tiles;
+    bool m_folded = false;
+    void showFoldState();
     QLabel* m_totalValue = nullptr;
     QLabel* m_peakValue = nullptr;
     QLabel* m_averageValue = nullptr;

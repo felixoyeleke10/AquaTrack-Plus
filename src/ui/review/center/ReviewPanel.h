@@ -21,6 +21,9 @@ class QStackedWidget;
 class QTabBar;
 class LogView;
 class SequenceView;
+namespace aquatrack::ui {
+class SectionHeader;
+}
 
 // Centre column: the frame under review, transport, the sequence timeline,
 // and the summary charts for whatever is currently loaded.
@@ -71,6 +74,9 @@ public:
     };
     [[nodiscard]] PanelHeights panelHeights() const;
     void setPanelHeights(PanelHeights heights);
+    // Panels folded to their header ("activity", "log").
+    [[nodiscard]] QStringList foldedPanels() const;
+    void setFoldedPanels(const QStringList& ids);
 
 signals:
     void playToggled();
@@ -85,6 +91,8 @@ signals:
     void analysisCancelRequested();
     // The reviewer dragged a panel's edge.
     void panelHeightsChanged();
+    // The reviewer folded or unfolded a panel.
+    void foldingChanged();
     void detectorChosen(QString modelId);
     void manageModelsRequested();
 
@@ -134,6 +142,17 @@ private:
     QSplitter* m_logSplit = nullptr;      // picture | activity | log
     std::optional<PanelHeights> m_pendingHeights;  // to apply once laid out
     void applyPanelHeights();
+    // Height each lower panel opens to (index 1: activity, 2: log).
+    int m_openHeight[3] = {0, 200, 200};
+    aquatrack::ui::SectionHeader* m_logFold = nullptr;
+    bool m_logFolded = false;
+    [[nodiscard]] bool isPaneFolded(int index) const;
+    // Fixes a folded pane to its header's height and returns it.
+    int fitFoldedPane(int index);
+    // Shrinks a splitter pane to its header (its body already hidden), or
+    // opens it back to its remembered height.
+    void foldPane(int index, bool folded);
+    void setLogFolded(bool folded, bool fromUser);
     QTabBar* m_tabs = nullptr;            // Log | Events
     QStackedWidget* m_tabPages = nullptr;  // their pages
     LogView* m_log = nullptr;

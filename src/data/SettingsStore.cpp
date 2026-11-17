@@ -28,6 +28,9 @@ bool SettingsStore::save(const QString &path,
        QString::fromStdString(s.storage.defaultProjectDirectory)},
       {"mediaImport", QString::fromStdString(s.storage.mediaImport)},
       {"recentProjects", recent}};
+  QJsonArray folded;
+  for (const auto &id : s.layout.foldedSections)
+    folded.append(QString::fromStdString(id));
   QJsonObject root{
       {"video", QJsonObject{{"decodeThreads", s.video.decodeThreads},
                             {"frameBufferSize", s.video.frameBufferSize},
@@ -57,7 +60,8 @@ bool SettingsStore::save(const QString &path,
        QJsonObject{{"theme", QString::fromStdString(s.appearance.theme)},
                    {"interfaceScale", s.appearance.interfaceScale}}},
       {"layout", QJsonObject{{"reviewActivityHeight", s.layout.reviewActivityHeight},
-                             {"reviewLogHeight", s.layout.reviewLogHeight}}}};
+                             {"reviewLogHeight", s.layout.reviewLogHeight},
+                             {"foldedSections", folded}}}};
   QSaveFile file(path);
   if (!file.open(QIODevice::WriteOnly)) {
     setError(error, file.errorString());
@@ -153,6 +157,9 @@ bool SettingsStore::load(const QString &path,
   candidate.layout.reviewLogHeight =
       std::clamp(l["reviewLogHeight"].toInt(candidate.layout.reviewLogHeight), 0,
                  system::settings::MaxReviewPanelHeight);
+  for (const auto item : l["foldedSections"].toArray())
+    if (item.isString() && candidate.layout.foldedSections.size() < 32)
+      candidate.layout.foldedSections.push_back(item.toString().toStdString());
   std::string reason;
   if (!system::settings::isValid(candidate, &reason)) {
     setError(error, QString::fromStdString(reason));

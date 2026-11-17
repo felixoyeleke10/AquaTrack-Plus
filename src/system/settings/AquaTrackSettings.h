@@ -51,6 +51,9 @@ struct LayoutSettings {
   // The Review page's panels under the picture, in pixels; 0 = collapsed.
   int reviewActivityHeight = 200;
   int reviewLogHeight = 200;
+  // Review sections folded to their header ("sequence", "summary",
+  // "display", "activity", "log").
+  std::vector<std::string> foldedSections;
 };
 inline constexpr int MaxReviewPanelHeight = 4000;
 struct AquaTrackSettings {

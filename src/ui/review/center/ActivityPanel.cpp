@@ -2,6 +2,7 @@
 
 #include "ui/AppTheme.h"
 #include "ui/common/Glyphs.h"
+#include "ui/common/SectionHeader.h"
 #include "ui/common/Widgets.h"
 
 #include <QComboBox>
@@ -326,20 +327,23 @@ ActivityPanel::ActivityPanel(QWidget* parent) : QWidget(parent)
     auto* head = new QHBoxLayout;
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(10);
-    auto* mark = new QLabel(this);
-    mark->setPixmap(glyphPixmap(Glyph::Events, 22, palette::AccentHover, GlyphStyle::Duotone));
-    head->addWidget(mark, 0, Qt::AlignTop);
-    auto* titles = new QVBoxLayout;
-    titles->setContentsMargins(0, 0, 0, 0);
-    titles->setSpacing(1);
-    titles->addWidget(sectionLabel(QStringLiteral("Fish activity"), this));
-    m_subtitle = typedLabel(QString(), "dim", this);
-    titles->addWidget(m_subtitle);
-    head->addLayout(titles);
-    head->addStretch();
-    head->addWidget(statTile(Glyph::Tracks, QStringLiteral("Total tracks"), m_totalValue, this, m_captions));
-    head->addWidget(statTile(Glyph::Analytics, QStringLiteral("Peak activity"), m_peakValue, this, m_captions));
-    head->addWidget(statTile(Glyph::Events, QStringLiteral("Avg. activity"), m_averageValue, this, m_captions));
+    // The header folds the panel, VS Code style; the subtitle sits after
+    // the title, and becomes a one-line summary when folded.
+    m_header = new SectionHeader(QStringLiteral("Fish activity"), this);
+    m_header->setObjectName(QStringLiteral("fold_activity"));
+    m_subtitle = m_header->detail();
+    m_subtitle->show();
+    connect(m_header, &SectionHeader::toggled, this, [this](bool expanded) {
+        m_folded = !expanded;
+        showFoldState();
+        emit foldToggled(m_folded);
+    });
+    head->addWidget(m_header, 1, Qt::AlignVCenter);
+    m_tiles << statTile(Glyph::Tracks, QStringLiteral("Total tracks"), m_totalValue, this, m_captions)
+            << statTile(Glyph::Analytics, QStringLiteral("Peak activity"), m_peakValue, this, m_captions)
+            << statTile(Glyph::Events, QStringLiteral("Avg. activity"), m_averageValue, this, m_captions);
+    for (QWidget* tile : m_tiles)
+        head->addWidget(tile);
     m_mode = new QComboBox(this);
     m_mode->setObjectName(QStringLiteral("activityMode"));
     m_mode->addItem(QStringLiteral("Detection density"));
@@ -380,6 +384,30 @@ ActivityPanel::ActivityPanel(QWidget* parent) : QWidget(parent)
     applyMode();
 }
 
+void ActivityPanel::setFolded(bool folded)
+{
+    if (folded == m_folded)
+        return;
+    m_folded = folded;
+    m_header->setExpanded(!folded);
+    showFoldState();
+}
+
+void ActivityPanel::showFoldState()
+{
+    // Folded: only the header line, carrying the summary. Open: everything;
+    // the mode menu names what is shown, so the header needs no subtitle
+    // (the menu's tooltip spells it out).
+    m_subtitle->setText(m_summaryText);
+    m_subtitle->setVisible(m_folded);
+    m_mode->setToolTip(m_subtitleText);
+    for (QWidget* tile : m_tiles)
+        tile->setVisible(!m_folded);
+    m_mode->setVisible(!m_folded);
+    m_views->setVisible(!m_folded);
+    m_legend->setVisible(!m_folded && m_mode->currentIndex() != 2);
+}
+
 void ActivityPanel::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
@@ -391,7 +419,7 @@ void ActivityPanel::setCompact(bool compact)
     if (compact == m_compact)
         return;
     m_compact = compact;
-    m_subtitle->setVisible(!compact);
+    m_subtitle->setVisible(m_folded);
     for (auto* caption : m_captions)
         caption->setVisible(!compact);
     m_buckets->setVisible(!compact);
@@ -433,9 +461,9 @@ void ActivityPanel::applyMode()
     const bool detections = mode == 1;
     const QVector<int>& series = detections ? m_detections : m_tracks;
     const QString unit = detections ? QStringLiteral("detections/s") : QStringLiteral("tracks/s");
-    m_subtitle->setText(lanes        ? QStringLiteral("One row per track; gaps are where it was lost")
-                        : detections ? QStringLiteral("Detections per second")
-                                     : QStringLiteral("Detection density (tracks per second)"));
+    m_subtitleText = lanes        ? QStringLiteral("One row per track; gaps are where it was lost")
+                     : detections ? QStringLiteral("Detections per second")
+                                  : QStringLiteral("Detection density (tracks per second)");
     m_views->setCurrentIndex(lanes ? 1 : 0);
     // A stack asks for its largest page, shown or not; with thousands of
     // tracks the hidden lanes would inflate the card. Only the visible
@@ -445,7 +473,7 @@ void ActivityPanel::applyMode()
             QSizePolicy::Expanding, index == m_views->currentIndex() ? QSizePolicy::Expanding
                                                                      : QSizePolicy::Ignored);
     m_views->updateGeometry();
-    m_legend->setVisible(!lanes);
+    m_legend->setVisible(!lanes && !m_folded);
     m_strip->setSeries(series, unit);
 
     const QLocale locale = QLocale::system();
@@ -456,6 +484,12 @@ void ActivityPanel::applyMode()
     m_totalValue->setText(m_totalTracks > 0 ? locale.toString(m_totalTracks) : QStringLiteral("—"));
     m_peakValue->setText(any ? locale.toString(peak) : QStringLiteral("—"));
     m_averageValue->setText(any ? locale.toString(int(std::round(average))) : QStringLiteral("—"));
+    m_summaryText = m_totalTracks > 0 || any
+                        ? QStringLiteral("%1 tracks  ·  peak %2  ·  avg %3 %4")
+                              .arg(locale.toString(m_totalTracks), locale.toString(peak),
+                                   locale.toString(int(std::round(average))), unit)
+                        : QStringLiteral("No activity yet");
+    showFoldState();
     m_peakValue->setToolTip(QStringLiteral("Most %1 in any one second").arg(unit));
     m_averageValue->setToolTip(QStringLiteral("Average %1 across the sequence").arg(unit));
 

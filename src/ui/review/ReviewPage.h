@@ -90,6 +90,10 @@ public:
     // Heights of Fish activity and Log / Events, remembered between sessions.
     [[nodiscard]] ReviewPanel::PanelHeights panelHeights() const;
     void setPanelHeights(ReviewPanel::PanelHeights heights);
+    // Sections folded to their header, left rail and centre alike
+    // ("sequence", "summary", "display", "activity", "log").
+    [[nodiscard]] QStringList foldedSections() const;
+    void setFoldedSections(const QStringList& ids);
     // Adds an app status message to the Review page's log.
     void logStatus(const QString& message);
     // The detectors Detect & track can use, and the one it will use.

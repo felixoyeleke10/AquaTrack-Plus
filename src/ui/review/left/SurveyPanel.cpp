@@ -2,6 +2,7 @@
 
 #include "ui/AppTheme.h"
 #include "ui/common/Glyphs.h"
+#include "ui/common/SectionHeader.h"
 #include "ui/common/Widgets.h"
 
 #include <QComboBox>
@@ -127,7 +128,6 @@ SurveyPanel::SurveyPanel(QWidget* parent) : QFrame(parent)
     column->setSpacing(8);
 
     // ---- What is open --------------------------------------------------
-    column->addWidget(sectionLabel(QStringLiteral("Sequence"), content));
     auto* sequenceCard = card(content);
     auto* sequenceBody = new QVBoxLayout(sequenceCard);
     sequenceBody->setContentsMargins(14, 12, 10, 10);
@@ -159,11 +159,10 @@ SurveyPanel::SurveyPanel(QWidget* parent) : QFrame(parent)
             emit sequenceFileRequested(frame);
     });
     sequenceBody->addWidget(m_sequenceFiles);
-    column->addWidget(sequenceCard);
+    addSection(QStringLiteral("sequence"), QStringLiteral("Sequence"), sequenceCard, column, content);
 
     // ---- What it adds up to --------------------------------------------
     column->addSpacing(6);
-    column->addWidget(sectionLabel(QStringLiteral("Summary"), content));
     auto* summaryCard = card(content);
     auto* summaryBody = new QVBoxLayout(summaryCard);
     summaryBody->setContentsMargins(14, 7, 14, 7);
@@ -176,11 +175,10 @@ SurveyPanel::SurveyPanel(QWidget* parent) : QFrame(parent)
     summaryBody->addWidget(
         figureRow(Glyph::Species, QStringLiteral("Species"), m_speciesCount, summaryCard));
     summaryBody->addWidget(figureRow(Glyph::Events, QStringLiteral("Events"), m_eventCount, summaryCard));
-    column->addWidget(summaryCard);
+    addSection(QStringLiteral("summary"), QStringLiteral("Summary"), summaryCard, column, content);
 
     // ---- What is drawn ---------------------------------------------------
     column->addSpacing(6);
-    column->addWidget(sectionLabel(QStringLiteral("Display"), content));
     auto* filterCard = card(content);
     auto* filterBody = new QVBoxLayout(filterCard);
     filterBody->setContentsMargins(14, 12, 14, 12);
@@ -229,7 +227,7 @@ SurveyPanel::SurveyPanel(QWidget* parent) : QFrame(parent)
         connect(row, &ToggleRow::toggled, this, &SurveyPanel::filtersChanged);
         filterBody->addWidget(row);
     }
-    column->addWidget(filterCard);
+    addSection(QStringLiteral("display"), QStringLiteral("Display"), filterCard, column, content);
 
     column->addStretch();
     scroll->setWidget(content);
@@ -334,6 +332,38 @@ void SurveyPanel::setSpecies(const QVector<QPair<int, QString>>& species)
     // filter fell back to every species; the canvas must hear about it.
     if (index < 0)
         emit filtersChanged();
+}
+
+void SurveyPanel::addSection(const QString& id, const QString& title, QWidget* body,
+                             QVBoxLayout* column, QWidget* parent)
+{
+    auto* header = new SectionHeader(title, parent);
+    header->setObjectName(QStringLiteral("fold_%1").arg(id));
+    column->addWidget(header);
+    column->addWidget(body);
+    connect(header, &SectionHeader::toggled, this, [this, body](bool expanded) {
+        body->setVisible(expanded);
+        emit foldingChanged();
+    });
+    m_sections.push_back({id, header, body});
+}
+
+QStringList SurveyPanel::foldedSections() const
+{
+    QStringList folded;
+    for (const auto& section : m_sections)
+        if (!section.header->isExpanded())
+            folded << section.id;
+    return folded;
+}
+
+void SurveyPanel::setFoldedSections(const QStringList& ids)
+{
+    for (const auto& section : m_sections) {
+        const bool expanded = !ids.contains(section.id);
+        section.header->setExpanded(expanded);
+        section.body->setVisible(expanded);
+    }
 }
 
 SurveyPanel::Filters SurveyPanel::filters() const

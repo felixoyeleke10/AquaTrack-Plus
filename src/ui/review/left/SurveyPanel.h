@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QFrame>
+#include <QStringList>
 #include <QVector>
 
 class QComboBox;
@@ -13,6 +14,10 @@ class ToggleSwitch;
 }
 
 // Left rail: what is loaded, what it adds up to, and what is drawn on it.
+namespace aquatrack::ui {
+class SectionHeader;
+}
+
 class SurveyPanel final : public QFrame {
     Q_OBJECT
 
@@ -58,11 +63,27 @@ public:
 
     [[nodiscard]] Filters filters() const;
 
+    // Folded sections ("sequence", "summary", "display"), remembered
+    // between sessions.
+    [[nodiscard]] QStringList foldedSections() const;
+    void setFoldedSections(const QStringList& ids);
+
 signals:
     void filtersChanged();
     void sequenceFileRequested(int frame);
+    void foldingChanged();
 
 private:
+    struct Section {
+        QString id;
+        aquatrack::ui::SectionHeader* header = nullptr;
+        QWidget* body = nullptr;
+    };
+    QVector<Section> m_sections;
+    // A folding header above `body`, added to `column`.
+    void addSection(const QString& id, const QString& title, QWidget* body,
+                    class QVBoxLayout* column, QWidget* parent);
+
     QLabel* m_sequenceName = nullptr;
     QLabel* m_sequenceDetail = nullptr;
     QListWidget* m_sequenceFiles = nullptr;

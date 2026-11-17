@@ -628,9 +628,27 @@ MainWindow::MainWindow(QWidget *parent)
   if (!m_settingsController->load(&settingsError))
     statusBar()->showMessage(
         QStringLiteral("Settings warning: %1").arg(settingsError));
-  // Panel heights from last session; saved again when the window closes.
-  m_review->setPanelHeights({m_settingsController->settings().layout.reviewActivityHeight,
-                             m_settingsController->settings().layout.reviewLogHeight});
+  // Panel heights and folded sections from last session; saved again when
+  // the window closes.
+  {
+    const auto &layout = m_settingsController->settings().layout;
+    QStringList folded;
+    for (const auto &id : layout.foldedSections)
+      folded << QString::fromStdString(id);
+    ReviewPanel::PanelHeights heights{layout.reviewActivityHeight, layout.reviewLogHeight};
+    // Before folding, a panel was hidden by dragging it to 0: that now
+    // means folded, opening to the usual height.
+    if (heights.activity == 0) {
+      heights.activity = 200;
+      folded << QStringLiteral("activity");
+    }
+    if (heights.log == 0) {
+      heights.log = 200;
+      folded << QStringLiteral("log");
+    }
+    m_review->setPanelHeights(heights);
+    m_review->setFoldedSections(folded);
+  }
 
   connect(m_appState, &aquatrack::application::AppState::currentPageChanged,
           this, [this](Page page) {
@@ -759,12 +777,16 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 void MainWindow::rememberLayout() {
   // Saved on close, not on every drag: saving settings refreshes pages.
   const auto heights = m_review->panelHeights();
+  std::vector<std::string> folded;
+  for (const QString &id : m_review->foldedSections())
+    folded.push_back(id.toStdString());
   auto updated = m_settingsController->settings();
   if (updated.layout.reviewActivityHeight == heights.activity &&
-      updated.layout.reviewLogHeight == heights.log)
+      updated.layout.reviewLogHeight == heights.log && updated.layout.foldedSections == folded)
     return;
   updated.layout.reviewActivityHeight = heights.activity;
   updated.layout.reviewLogHeight = heights.log;
+  updated.layout.foldedSections = folded;
   QString ignored;
   (void)m_settingsController->save(updated, &ignored);
 }

@@ -12,6 +12,8 @@ add_library(aquatrack-ui
     src/ui/common/HoverHint.cpp
     src/ui/common/HoverHint.h
     src/ui/common/InspectorTabs.cpp
+    src/ui/common/SectionHeader.cpp
+    src/ui/common/SectionHeader.h
     src/ui/common/InspectorTabs.h
     src/ui/common/WindowChrome.cpp
     src/ui/common/WindowChrome.h

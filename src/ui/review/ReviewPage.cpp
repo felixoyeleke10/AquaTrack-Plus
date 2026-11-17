@@ -1243,6 +1243,17 @@ void ReviewPage::setPanelHeights(ReviewPanel::PanelHeights heights)
     m_reviewPanel->setPanelHeights(heights);
 }
 
+QStringList ReviewPage::foldedSections() const
+{
+    return m_surveyPanel->foldedSections() + m_reviewPanel->foldedPanels();
+}
+
+void ReviewPage::setFoldedSections(const QStringList& ids)
+{
+    m_surveyPanel->setFoldedSections(ids);
+    m_reviewPanel->setFoldedPanels(ids);
+}
+
 void ReviewPage::logStatus(const QString& message)
 {
     if (message.trimmed().isEmpty())

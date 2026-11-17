@@ -55,6 +55,14 @@ int main(int argc, char *argv[]) {
                     back.layout.reviewActivityHeight == height + 20,
                 "the panel heights round-trip");
   }
+  // Folded sections round-trip in order.
+  layout.layout.foldedSections = {"summary", "log"};
+  requireTest(store.save(path, layout, &error), "save folded sections");
+  {
+    aquatrack::system::settings::AquaTrackSettings back;
+    requireTest(store.load(path, back, &error) && back.layout.foldedSections == layout.layout.foldedSections,
+                "folded sections round-trip");
+  }
   // A hand-edited, out-of-range height is brought into range; it does not
   // make the whole settings file unreadable.
   {

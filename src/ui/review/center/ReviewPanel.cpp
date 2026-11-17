@@ -2,6 +2,7 @@
 
 #include "ui/AppTheme.h"
 #include "ui/common/Glyphs.h"
+#include "ui/common/SectionHeader.h"
 #include "ui/common/Widgets.h"
 #include "ui/review/center/LogView.h"
 #include "ui/review/center/video/SequenceView.h"
@@ -205,6 +206,7 @@ protected:
 
 constexpr int kDefaultActivityHeight = 200;
 constexpr int kDefaultLogHeight = 200;
+constexpr int kLogMinimum = 96;  // the tab strip and a few lines
 
 // HH:MM:SS:FF, the frame within its second, as editing software shows it.
 QString timecode(qint64 milliseconds, int frameRate)
@@ -323,6 +325,11 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     connect(m_filmstrip, &Filmstrip::frameRequested, this, &ReviewPanel::frameRequested);
     timelineBody->addWidget(m_filmstrip);
     split->addWidget(timelineCard);
+    connect(m_activity, &ActivityPanel::foldToggled, this, [this](bool folded) {
+        m_filmstrip->setVisible(!folded);
+        foldPane(1, folded);
+        emit foldingChanged();
+    });
 
     // ---- Log and events ----------------------------------------------
     auto* tabCard = card(split);
@@ -335,7 +342,13 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     strip->setProperty("role", "bare");
     auto* stripRow = new QHBoxLayout(strip);
     stripRow->setContentsMargins(0, 0, 0, 0);
-    stripRow->setSpacing(0);
+    stripRow->setSpacing(2);
+    // Folds the log to its tab strip, VS Code style.
+    m_logFold = new SectionHeader(QString(), strip);
+    m_logFold->setObjectName(QStringLiteral("fold_log"));
+    connect(m_logFold, &SectionHeader::toggled, this,
+            [this](bool expanded) { setLogFolded(!expanded, true); });
+    stripRow->addWidget(m_logFold, 0, Qt::AlignVCenter);
     m_tabs = new QTabBar(strip);
     m_tabs->setObjectName(QStringLiteral("reviewLowerTabs"));
     m_tabs->setDrawBase(false);
@@ -369,19 +382,23 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     connect(m_tabs, &QTabBar::currentChanged, this, [this](int index) {
         m_tabPages->setCurrentIndex(index);
         // Copy and Clear belong to the log only.
-        m_log->tools()->setVisible(index == 0);
+        m_log->tools()->setVisible(index == 0 && !m_logFolded);
+    });
+    // Clicking a tab of a folded panel opens it, as in VS Code.
+    connect(m_tabs, &QTabBar::tabBarClicked, this, [this](int index) {
+        if (index >= 0 && m_logFolded)
+            setLogFolded(false, true);
     });
     tabBody->addWidget(strip);
     tabBody->addWidget(m_tabPages, 1);
-    // Room for the tabs and a few lines; less than that and it collapses.
-    tabCard->setMinimumHeight(96);
+    // Room for the tabs and a few lines when open.
+    tabCard->setMinimumHeight(kLogMinimum);
     split->addWidget(tabCard);
 
-    // The picture is never hidden; the activity and the log can be, by
-    // dragging their edge all the way.
-    split->setCollapsible(0, false);
-    split->setCollapsible(1, true);
-    split->setCollapsible(2, true);
+    // Panels fold to their header with the chevron; dragging stops at a
+    // panel's minimum, so a header never disappears.
+    for (int index = 0; index < 3; ++index)
+        split->setCollapsible(index, false);
     // A taller window grows the picture, not the panels under it.
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 0);
@@ -395,20 +412,27 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
 
 ReviewPanel::PanelHeights ReviewPanel::panelHeights() const
 {
-    // Heights not yet applied (the page has not been laid out) are still
-    // the ones to keep.
+    // The open height of each panel: a folded one keeps the height it will
+    // open to, and heights not yet applied are still the ones to keep.
+    PanelHeights heights{m_openHeight[1], m_openHeight[2]};
     if (m_pendingHeights)
         return *m_pendingHeights;
     const auto sizes = m_logSplit->sizes();
-    if (sizes.size() < 3)
-        return {};
-    return {sizes.at(1), sizes.at(2)};
+    if (sizes.size() == 3 && m_logSplit->isVisible()) {
+        if (!isPaneFolded(1))
+            heights.activity = sizes.at(1);
+        if (!isPaneFolded(2))
+            heights.log = sizes.at(2);
+    }
+    return heights;
 }
 
 void ReviewPanel::setPanelHeights(PanelHeights heights)
 {
     heights.activity = std::max(0, heights.activity);
     heights.log = std::max(0, heights.log);
+    m_openHeight[1] = heights.activity;
+    m_openHeight[2] = heights.log;
     m_pendingHeights = heights;
     applyPanelHeights();
 }
@@ -426,10 +450,105 @@ void ReviewPanel::applyPanelHeights()
     // to the minimum; wait until it is shown at its real size.
     if (!m_logSplit->isVisible() || total <= 0)
         return;
-    const int activity = std::min(m_pendingHeights->activity, total);
-    const int log = std::min(m_pendingHeights->log, total - activity);
+    // A folded panel is its header's height, whatever it opens to; measured
+    // now, on screen, since a fold restored before the page was shown was
+    // sized by a layout that had not settled.
+    const auto height = [this](int index, int open) {
+        return isPaneFolded(index) ? fitFoldedPane(index) : open;
+    };
+    const int activity = std::min(height(1, m_pendingHeights->activity), total);
+    const int log = std::min(height(2, m_pendingHeights->log), total - activity);
     m_logSplit->setSizes({total - activity - log, activity, log});
     m_pendingHeights.reset();
+}
+
+int ReviewPanel::fitFoldedPane(int index)
+{
+    QWidget* pane = m_logSplit->widget(index);
+    pane->setMinimumHeight(0);
+    pane->setMaximumHeight(QWIDGETSIZE_MAX);
+    // Settle the hidden body out of every nested layout before measuring.
+    for (QLayout* layout : pane->findChildren<QLayout*>())
+        layout->invalidate();
+    if (pane->layout()) {
+        pane->layout()->invalidate();
+        pane->layout()->activate();
+    }
+    const int header = pane->minimumSizeHint().height();
+    pane->setFixedHeight(header);
+    return header;
+}
+
+bool ReviewPanel::isPaneFolded(int index) const
+{
+    return index == 1 ? m_activity->isFolded() : index == 2 ? m_logFolded : false;
+}
+
+void ReviewPanel::foldPane(int index, bool folded)
+{
+    QWidget* pane = m_logSplit->widget(index);
+    auto sizes = m_logSplit->sizes();
+    const bool laidOut = m_logSplit->isVisible() && sizes.size() == 3;
+    if (folded) {
+        // Remember what it opens back to (only a real, open height).
+        if (laidOut && pane->maximumHeight() == QWIDGETSIZE_MAX && sizes.at(index) > 0)
+            m_openHeight[index] = sizes.at(index);
+        // Just the header: its body is hidden by now.
+        const int header = fitFoldedPane(index);
+        if (laidOut) {
+            // The picture takes the room the panel gave up.
+            sizes[0] += sizes.at(index) - header;
+            sizes[index] = header;
+            m_logSplit->setSizes(sizes);
+        }
+    } else {
+        pane->setMinimumHeight(index == 2 ? kLogMinimum : 0);
+        pane->setMaximumHeight(QWIDGETSIZE_MAX);
+        if (laidOut) {
+            // Open to its last height, taken from the picture down to its
+            // minimum.
+            sizes = m_logSplit->sizes();
+            const int spare = std::max(0, sizes.at(0) - m_logSplit->widget(0)->minimumHeight());
+            const int grow = std::clamp(m_openHeight[index] - sizes.at(index), 0, spare);
+            sizes[0] -= grow;
+            sizes[index] += grow;
+            m_logSplit->setSizes(sizes);
+        }
+    }
+}
+
+void ReviewPanel::setLogFolded(bool folded, bool fromUser)
+{
+    if (folded == m_logFolded)
+        return;
+    m_logFolded = folded;
+    m_logFold->setExpanded(!folded);
+    m_tabPages->setVisible(!folded);
+    m_log->tools()->setVisible(!folded && m_tabs->currentIndex() == 0);
+    foldPane(2, folded);
+    if (fromUser)
+        emit foldingChanged();
+}
+
+QStringList ReviewPanel::foldedPanels() const
+{
+    QStringList folded;
+    if (m_activity->isFolded())
+        folded << QStringLiteral("activity");
+    if (m_logFolded)
+        folded << QStringLiteral("log");
+    return folded;
+}
+
+void ReviewPanel::setFoldedPanels(const QStringList& ids)
+{
+    const bool activity = ids.contains(QStringLiteral("activity"));
+    if (activity != m_activity->isFolded()) {
+        m_activity->setFolded(activity);
+        m_filmstrip->setVisible(!activity);
+        foldPane(1, activity);
+    }
+    setLogFolded(ids.contains(QStringLiteral("log")), false);
 }
 
 QWidget* ReviewPanel::buildHeader()
