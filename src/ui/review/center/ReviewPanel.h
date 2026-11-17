@@ -97,6 +97,7 @@ private:
     aquatrack::ui::TrackLanes* m_timeline = nullptr;  // inside m_activity
     aquatrack::ui::Filmstrip* m_filmstrip = nullptr;
 
+    QWidget* m_titleRow = nullptr;  // the title with its status badge beside it
     QLabel* m_title = nullptr;
     QLabel* m_detail = nullptr;
     QLabel* m_source = nullptr;

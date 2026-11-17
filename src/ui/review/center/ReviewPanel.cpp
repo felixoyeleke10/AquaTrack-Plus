@@ -241,51 +241,68 @@ QWidget* ReviewPanel::buildHeader()
     auto* row = new QHBoxLayout;
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(8);
-    auto* titles = new QVBoxLayout;
-    titles->setContentsMargins(0, 0, 0, 0);
-    titles->setSpacing(0);
-    m_title = typedLabel(QStringLiteral("Nothing open"), "small", header);
+    // Left: what is open. The name comes first and keeps its room; its
+    // status badge sits right beside it.
+    auto* titles = new QWidget(header);
+    titles->setProperty("role", "bare");
+    titles->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* titleColumn = new QVBoxLayout(titles);
+    titleColumn->setContentsMargins(0, 0, 0, 0);
+    titleColumn->setSpacing(1);
+    m_titleRow = new QWidget(titles);
+    m_titleRow->setProperty("role", "bare");
+    auto* titleLine = new QHBoxLayout(m_titleRow);
+    titleLine->setContentsMargins(0, 0, 0, 0);
+    titleLine->setSpacing(8);
+    m_title = new QLabel(QStringLiteral("Nothing open"), m_titleRow);
     m_title->setObjectName(QStringLiteral("reviewTitle"));
-    m_title->setStyleSheet(QStringLiteral("font-weight:600;color:%1").arg(palette::TextPrimary.name()));
+    m_title->setProperty("role", "reviewTitle");
     m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    // The title and detail give way before the buttons do.
-    m_title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    titles->addWidget(m_title);
-    m_detail = typedLabel(QStringLiteral("Open a sequence or video from the Video library"), "dim",
-                          header);
-    m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    titles->addWidget(m_detail);
-    row->addLayout(titles, 1);
-
-    m_source = typedLabel(QString(), "small", header);
+    titleLine->addWidget(m_title, 0, Qt::AlignVCenter);
+    m_source = new QLabel(m_titleRow);
     m_source->setObjectName(QStringLiteral("annotationSource"));
     m_source->hide();
-    row->addWidget(m_source, 0, Qt::AlignVCenter);
+    titleLine->addWidget(m_source, 0, Qt::AlignVCenter);
+    titleLine->addStretch(1);
+    titleColumn->addWidget(m_titleRow);
+    m_detail = typedLabel(QStringLiteral("Open a sequence or video from the Video library"), "dim",
+                          titles);
+    m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    titleColumn->addWidget(m_detail);
+    row->addWidget(titles, 1);
 
-    m_import = textButton(QStringLiteral("Import annotations"), header);
+    // Right: a secondary icon action, then the one primary action.
+    m_import = iconButton(Glyph::Annotations, QStringLiteral("Import annotations"), header);
     m_import->setObjectName(QStringLiteral("importAnnotations"));
-    m_import->setIcon(glyphIcon(Glyph::Annotations, 15, palette::TextSecondary, palette::TextPrimary));
     m_import->setToolTip(QStringLiteral(
-        "Load ground-truth tracks for this media from a MOTChallenge gt.txt or a COCO-style "
+        "Import annotations: ground-truth tracks from a MOTChallenge gt.txt or a COCO-style "
         "tracking JSON (for example SFISHTRACK annotations)"));
     connect(m_import, &QPushButton::clicked, this, &ReviewPanel::importAnnotationsRequested);
     row->addWidget(m_import, 0, Qt::AlignVCenter);
+    row->addSpacing(2);
 
-    // Which detector Detect & track runs, switchable without leaving Review.
-    m_detector = textButton(QStringLiteral("No detector"), header);
-    m_detector->setObjectName(QStringLiteral("detectorPicker"));
-    m_detector->setIcon(glyphIcon(Glyph::Models, 15, palette::TextSecondary, palette::TextPrimary));
-    m_detector->setMenu(new QMenu(m_detector));
-    row->addWidget(m_detector, 0, Qt::AlignVCenter);
-    setDetectorChoices({}, {}, false);
-
-    m_analyze = textButton(QStringLiteral("Detect && track"), header, "primary");
+    // Detect & track with its detector as one split button: the action on
+    // the left, which model runs it on the right.
+    auto* split = new QWidget(header);
+    split->setProperty("role", "bare");
+    auto* splitRow = new QHBoxLayout(split);
+    splitRow->setContentsMargins(0, 0, 0, 0);
+    splitRow->setSpacing(0);
+    m_analyze = textButton(QStringLiteral("Detect && track"), split, "primary");
     m_analyze->setObjectName(QStringLiteral("analyzeMedia"));
     m_analyze->setIcon(glyphIcon(Glyph::Sparkle, 15, Qt::white, Qt::white));
     m_analyze->setToolTip(QStringLiteral(
-        "Run the active detector and tracker over every frame and load the tracks for review"));
+        "Run the detector and tracker over every frame and load the tracks for review"));
     connect(m_analyze, &QPushButton::clicked, this, &ReviewPanel::analyzeRequested);
-    row->addWidget(m_analyze, 0, Qt::AlignVCenter);
+    splitRow->addWidget(m_analyze);
+    // Which detector Detect & track runs, switchable without leaving Review.
+    m_detector = new QPushButton(QStringLiteral("No detector"), split);
+    m_detector->setObjectName(QStringLiteral("detectorPicker"));
+    m_detector->setCursor(Qt::PointingHandCursor);
+    m_detector->setMenu(new QMenu(m_detector));
+    splitRow->addWidget(m_detector);
+    row->addWidget(split, 0, Qt::AlignVCenter);
+    setDetectorChoices({}, {}, false);
     column->addLayout(row);
 
     m_progressRow = new QWidget(header);
@@ -322,14 +339,20 @@ void ReviewPanel::fitHeaderText()
 {
     // Shortened with an ellipsis rather than cut mid-word at the edge; the
     // whole text is the tooltip.
-    const auto fit = [](QLabel* label, const QString& text) {
-        const int room = std::max(40, label->width());
-        const QString shown = label->fontMetrics().elidedText(text, Qt::ElideRight, room);
+    const auto fit = [](QLabel* label, const QString& text, int room) {
+        const QString shown = label->fontMetrics().elidedText(text, Qt::ElideMiddle, room);
         label->setText(shown);
         label->setToolTip(shown == text ? QString() : text);
     };
-    fit(m_title, m_titleText);
-    fit(m_detail, m_detailText);
+    // The title takes what its text needs, up to what is left beside the
+    // badge; middle elision keeps both ends of names like "video_001 to
+    // video_054" readable.
+    const int badge = m_source->isVisible() ? m_source->sizeHint().width() + 8 : 0;
+    const int room = std::max(60, m_titleRow->width() - badge);
+    const int needed = m_title->fontMetrics().horizontalAdvance(m_titleText) + 2;
+    m_title->setFixedWidth(std::min(needed, room));
+    fit(m_title, m_titleText, std::min(needed, room));
+    fit(m_detail, m_detailText, std::max(40, m_detail->width()));
 }
 
 void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent,
@@ -338,11 +361,12 @@ void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent,
     m_sourceText = text;
     m_source->setToolTip(details.isEmpty() ? text : text + QStringLiteral("\n") + details);
     m_source->setVisible(!text.isEmpty() && !m_compactHeader);
-    // A long model name must not push the buttons off the header.
-    m_source->setText(m_source->fontMetrics().elidedText(text, Qt::ElideMiddle, 240));
+    m_source->setText(m_source->fontMetrics().elidedText(text, Qt::ElideMiddle, 220));
+    // The title's room depends on the badge beside it.
+    QTimer::singleShot(0, this, &ReviewPanel::fitHeaderText);
     m_source->setStyleSheet(
-        QStringLiteral("padding:3px 9px;border-radius:9px;font-weight:600;color:%1;"
-                       "background:rgba(%2,%3,%4,38);border:1px solid rgba(%2,%3,%4,110)")
+        QStringLiteral("padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;color:%1;"
+                       "background:rgba(%2,%3,%4,30);border:1px solid rgba(%2,%3,%4,90)")
             .arg(accent.name())
             .arg(accent.red())
             .arg(accent.green())
@@ -396,11 +420,15 @@ void ReviewPanel::setDetectorChoices(const QVector<DetectorOption>& options,
 
 void ReviewPanel::updateDetectorButton()
 {
-    // Narrow headers keep only the icon; the name stays in the tooltip.
+    // The short name ("RT-DETR-L", not "RT-DETR-L (rtdetr_l_converged)");
+    // narrow headers keep only the arrow, with the name in the tooltip.
+    QString name = m_detectorName;
+    if (const int open = name.indexOf(QStringLiteral(" (")); open > 0)
+        name.truncate(open);
     m_detector->setText(m_compactHeader
                             ? QString()
                             : m_detector->fontMetrics()
-                                  .elidedText(m_detectorName, Qt::ElideRight, 170)
+                                  .elidedText(name, Qt::ElideRight, 130)
                                   .replace(QLatin1Char('&'), QStringLiteral("&&")));
 }
 
@@ -417,7 +445,6 @@ void ReviewPanel::setCompactHeader(bool compact)
     if (compact == m_compactHeader)
         return;
     m_compactHeader = compact;
-    m_import->setText(compact ? QString() : QStringLiteral("Import annotations"));
     m_analyze->setText(compact ? QStringLiteral("Detect") : QStringLiteral("Detect && track"));
     updateDetectorButton();
     m_source->setVisible(!m_sourceText.isEmpty() && !compact);
@@ -427,7 +454,8 @@ void ReviewPanel::setMediaActionsEnabled(bool enabled)
 {
     m_import->setEnabled(enabled && !m_analysisRunning);
     m_analyze->setEnabled(enabled && !m_analysisRunning);
-    m_detector->setEnabled(!m_analysisRunning);
+    // One split button: both halves enable together.
+    m_detector->setEnabled(enabled && !m_analysisRunning);
 }
 
 void ReviewPanel::setAnalysisRunning(bool running)
@@ -515,16 +543,23 @@ QWidget* ReviewPanel::buildTransport()
     row->addWidget(deck, 0, Qt::AlignVCenter);
     row->addSpacing(12);
 
-    // Timecode: where the playhead is, bright; how long it all is, quiet.
-    m_clock = new QLabel(QStringLiteral("00:00:00:00"), bar);
+    // Where the playhead is: timecode over the frame number, stacked so the
+    // scrubber keeps the width.
+    auto* readout = new QWidget(bar);
+    readout->setProperty("role", "bare");
+    auto* readoutColumn = new QVBoxLayout(readout);
+    readoutColumn->setContentsMargins(0, 0, 0, 0);
+    readoutColumn->setSpacing(0);
+    m_clock = new QLabel(QStringLiteral("00:00:00:00"), readout);
     m_clock->setProperty("role", "timecode");
     m_clock->setToolTip(QStringLiteral("Hours:minutes:seconds:frames"));
     m_clock->setEnabled(false);
-    row->addWidget(m_clock, 0, Qt::AlignVCenter);
-    m_clockTotal = new QLabel(QStringLiteral("/ 00:00:00"), bar);
-    m_clockTotal->setProperty("role", "timecodeTotal");
-    row->addWidget(m_clockTotal, 0, Qt::AlignVCenter);
-    row->addSpacing(14);
+    readoutColumn->addWidget(m_clock);
+    m_frameCounter = new QLabel(QStringLiteral("Frame –"), readout);
+    m_frameCounter->setProperty("role", "frameCounter");
+    readoutColumn->addWidget(m_frameCounter);
+    row->addWidget(readout, 0, Qt::AlignVCenter);
+    row->addSpacing(16);
 
     m_frameSlider = new QSlider(Qt::Horizontal, bar);
     m_frameSlider->setObjectName(QStringLiteral("frameScrubber"));
@@ -534,12 +569,11 @@ QWidget* ReviewPanel::buildTransport()
     row->addWidget(m_frameSlider, 1);
     row->addSpacing(12);
 
-    m_frameCounter = new QLabel(QStringLiteral("Frame –"), bar);
-    m_frameCounter->setProperty("role", "frameCounter");
-    m_frameCounter->setMinimumWidth(m_frameCounter->fontMetrics().horizontalAdvance(
-                                        QStringLiteral("Frame 00,000 / 00,000")) + 8);
-    m_frameCounter->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    row->addWidget(m_frameCounter, 0, Qt::AlignVCenter);
+    // How long it all is, at the scrubber's end.
+    m_clockTotal = new QLabel(QStringLiteral("00:00:00"), bar);
+    m_clockTotal->setProperty("role", "timecodeTotal");
+    m_clockTotal->setToolTip(QStringLiteral("Duration"));
+    row->addWidget(m_clockTotal, 0, Qt::AlignVCenter);
 
     auto* divider = new QFrame(bar);
     divider->setProperty("role", "transportDivider");
@@ -631,14 +665,14 @@ void ReviewPanel::showClock(int frame, int total, qint64 timeMs)
 {
     if (total <= 0) {
         m_clock->setText(QStringLiteral("00:00:00:00"));
-        m_clockTotal->setText(QStringLiteral("/ 00:00:00"));
+        m_clockTotal->setText(QStringLiteral("00:00:00"));
         m_frameCounter->setText(QStringLiteral("Frame –"));
         return;
     }
     const QLocale locale = QLocale::system();
     m_clock->setText(timecode(timeMs, m_frameRate));
-    m_clockTotal->setText(QStringLiteral("/ %1").arg(
-        clock(m_durationMs > 0 ? m_durationMs : qint64(total) * 1000 / m_frameRate)));
+    m_clockTotal->setText(
+        clock(m_durationMs > 0 ? m_durationMs : qint64(total) * 1000 / m_frameRate));
     m_frameCounter->setText(QStringLiteral("Frame %1 / %2")
                                 .arg(locale.toString(frame), locale.toString(total)));
 }

@@ -433,6 +433,9 @@ void ReviewPage::refreshHeader()
             detector = QString::fromStdString(run->modelName.empty() ? run->modelId
                                                                      : run->modelName);
             provenance = QStringLiteral("Detected with %1").arg(detector);
+            // The badge uses the short name: "RT-DETR-L", not "RT-DETR-L (rtdetr_l_...)".
+            if (const int open = detector.indexOf(QStringLiteral(" (")); open > 0)
+                detector.truncate(open);
             if (run->atMs > 0)
                 provenance += QStringLiteral(" on %1").arg(locale.toString(
                     QDateTime::fromMSecsSinceEpoch(run->atMs), QLocale::ShortFormat));

@@ -136,7 +136,23 @@ QPushButton:hover    { background: @surfaceHover; border-color: #2a3446; }
 QPushButton:pressed  { background: @surface; }
 QPushButton:disabled { background: @sunken; color: #3a4252; border-color: @lineSoft; }
 /* A button that opens a list of choices: the arrow sits centred on the right. */
-QPushButton#detectorPicker { padding-right: 26px; }
+/* Review header: Detect & track and its detector as one split button. */
+QLabel[role="reviewTitle"] { font-size: 13px; font-weight: 600; color: @text; }
+QPushButton#analyzeMedia { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+QPushButton#detectorPicker {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3f78e0, stop:1 #3466c4);
+    border: 1px solid @accent; border-left: 1px solid rgba(255, 255, 255, 60);
+    border-top-left-radius: 0; border-bottom-left-radius: 0;
+    color: rgba(255, 255, 255, 215); font-size: 12px; font-weight: 600;
+    padding: 7px 26px 7px 11px;
+}
+QPushButton#detectorPicker:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accentHover, stop:1 @accent);
+    color: #ffffff;
+}
+QPushButton#detectorPicker:disabled {
+    background: @sunken; color: #3a4252; border-color: @lineSoft;
+}
 QPushButton#detectorPicker::menu-indicator {
     subcontrol-origin: padding; subcontrol-position: right center; right: 9px;
 }
@@ -269,15 +285,15 @@ QPushButton[role="play"]:hover {
 QPushButton[role="play"]:pressed { background: @accent; }
 QPushButton[role="play"]:disabled { background: @surfaceRaised; border-color: @line; }
 QLabel[role="timecode"] {
-    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 15px; font-weight: 600;
-    color: @text; letter-spacing: 0.5px;
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 14px; font-weight: 600;
+    color: @text;
 }
 QLabel[role="timecode"]:disabled { color: @textDim; }
 QLabel[role="timecodeTotal"] {
     font-family: "Cascadia Mono", "Consolas", monospace; font-size: 12px; color: @textDim;
 }
 QLabel[role="frameCounter"] {
-    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 11px; color: @textDim;
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 10px; color: @textDim;
 }
 QFrame[role="transportDivider"] { background: @line; border: none; }
 #frameScrubber::groove:horizontal { height: 4px; }
