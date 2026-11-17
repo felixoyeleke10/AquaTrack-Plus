@@ -53,6 +53,8 @@ public:
 signals:
     void addMediaRequested();
     void addVideoFolderRequested();
+    // Sequences from a scanned training or benchmark dataset.
+    void addFromDatasetRequested();
     void addSequenceRequested();
     void createSequenceRequested(QStringList selectedVideos);
     // Reorder, add or remove the clips of a sequence of videos, or rename it.

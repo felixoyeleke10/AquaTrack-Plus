@@ -17,20 +17,29 @@ namespace {
 
 struct Destination {
     Glyph glyph;
-    const char* label;
-    int page;  // application::AppState::Page
+    const char* name;   // object name suffix: navDashboard, navModels, ...
+    const char* label;  // shown on hover
+    int page;           // application::AppState::Page
 };
 
+// Pages reached through another stop: Datasets is shown as part of
+// "Models & data", so that stop stays lit on it.
+int stopFor(int page)
+{
+    return page == 4 ? 5 : page;
+}
+
 // Left to right in the order a survey is worked, grouped by stage:
-//   home | prepare: find data, add it, pick a model
-//        | analyse: review and correct, then read the results
+//   home | prepare: add footage, pick a model (training data lives with the
+//        models) | analyse: review and correct, then read the results
 //        | deliver: export.
 // Settings is a utility, not a step, so it lives in the title bar.
 const QVector<QVector<Destination>> kStages{
-    {{Glyph::Dashboard, "Dashboard", 0}},
-    {{Glyph::Datasets, "Datasets", 4}, {Glyph::Video, "Videos", 1}, {Glyph::Models, "Models", 5}},
-    {{Glyph::Review, "Review", 2}, {Glyph::Analytics, "Analytics", 3}},
-    {{Glyph::Export, "Export", 7}},
+    {{Glyph::Dashboard, "Dashboard", "Dashboard", 0}},
+    {{Glyph::Video, "Videos", "Videos", 1},
+     {Glyph::Models, "Models", "Models & training data", 5}},
+    {{Glyph::Review, "Review", "Review", 2}, {Glyph::Analytics, "Analytics", "Analytics", 3}},
+    {{Glyph::Export, "Export", "Export", 7}},
 };
 
 constexpr int kIconSize = 18;
@@ -126,7 +135,7 @@ NavigationDock::NavigationDock(QWidget* parent) : QWidget(parent)
         for (const auto& destination : kStages.at(stage)) {
             const QString label = QString::fromLatin1(destination.label);
             auto* button = new PageButton(destination.glyph, label, pages);
-            button->setObjectName(QStringLiteral("nav%1").arg(label));
+            button->setObjectName(QStringLiteral("nav%1").arg(QLatin1String(destination.name)));
             const int page = destination.page;
             connect(button, &QPushButton::clicked, this, [this, page] { emit pageRequested(page); });
             pageRow->addWidget(button);
@@ -144,7 +153,7 @@ NavigationDock::NavigationDock(QWidget* parent) : QWidget(parent)
 void NavigationDock::setCurrentPage(int page)
 {
     for (const auto& entry : m_entries)
-        static_cast<PageButton*>(entry.button)->setActive(entry.page == page);
+        static_cast<PageButton*>(entry.button)->setActive(entry.page == stopFor(page));
 }
 
 void NavigationDock::setStatusMessage(const QString& message)

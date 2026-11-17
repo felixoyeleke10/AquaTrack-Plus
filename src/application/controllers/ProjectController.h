@@ -24,6 +24,9 @@ public:
   bool saveProject(QString *error = nullptr);
   bool addMedia(const QString &path, QString *error = nullptr);
   bool removeMedia(const QString &path, QString *error = nullptr);
+  // The detector this project remembers (empty: the app's active one).
+  // Saved straight away; does not emit projectChanged.
+  bool setDetector(const QString &modelId, QString *error = nullptr);
 
 signals:
   void projectChanged();

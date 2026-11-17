@@ -45,6 +45,7 @@ bool JsonObservationRepository::open(std::string &error) {
   m_surveys.clear();
   m_observations.clear();
   m_videos.clear();
+  m_detectors.clear();
   QFile file(m_path);
   if (!file.exists())
     return true;
@@ -102,6 +103,15 @@ bool JsonObservationRepository::open(std::string &error) {
     m_videos.insert(item.toString().toStdString());
   for (const auto &[id, value] : m_observations)
     m_videos.insert(value.videoId);
+  // Optional, so stores written before it was recorded still open.
+  const auto detectors = document.object().value("detectors").toObject();
+  for (auto it = detectors.begin(); it != detectors.end(); ++it) {
+    const auto object = it.value().toObject();
+    m_detectors[it.key().toStdString()] = {
+        object.value("modelId").toString().toStdString(),
+        object.value("modelName").toString().toStdString(),
+        object.value("atMs").toInteger()};
+  }
   return true;
 }
 bool JsonObservationRepository::saveSurvey(const domain::Survey &value,
@@ -172,12 +182,41 @@ bool JsonObservationRepository::removeVideo(const domain::VideoId &id,
     return true;
   const auto previous = m_observations;
   const auto previousVideos = m_videos;
+  const auto previousDetectors = m_detectors;
   std::erase_if(m_observations,
                 [&id](const auto &item) { return item.second.videoId == id; });
   m_videos.erase(id);
+  m_detectors.erase(id);
   if (!persist(error)) {
     m_observations = previous;
     m_videos = previousVideos;
+    m_detectors = previousDetectors;
+    return false;
+  }
+  return true;
+}
+
+std::optional<DetectorRun>
+JsonObservationRepository::detectorFor(const domain::VideoId &id) const {
+  const auto found = m_detectors.find(id);
+  return found == m_detectors.end() ? std::nullopt
+                                    : std::optional(found->second);
+}
+
+bool JsonObservationRepository::setDetector(
+    const domain::VideoId &id, const std::optional<DetectorRun> &run,
+    std::string &error) {
+  if (id.empty()) {
+    error = "video id is required";
+    return false;
+  }
+  const auto previous = m_detectors;
+  if (run)
+    m_detectors[id] = *run;
+  else if (m_detectors.erase(id) == 0)
+    return true;
+  if (!persist(error)) {
+    m_detectors = previous;
     return false;
   }
   return true;
@@ -210,16 +249,24 @@ bool JsonObservationRepository::persist(std::string &error) const {
   QJsonArray videos;
   for (const auto &id : m_videos)
     videos.append(QString::fromStdString(id));
+  QJsonObject detectors;
+  for (const auto &[id, run] : m_detectors)
+    detectors.insert(QString::fromStdString(id),
+                     QJsonObject{{"modelId", QString::fromStdString(run.modelId)},
+                                 {"modelName", QString::fromStdString(run.modelName)},
+                                 {"atMs", run.atMs}});
+  QJsonObject root{{"version", 1},
+                   {"surveys", surveys},
+                   {"videos", videos},
+                   {"observations", observations}};
+  if (!detectors.isEmpty())
+    root.insert("detectors", detectors);
   QSaveFile file(m_path);
   if (!file.open(QIODevice::WriteOnly)) {
     error = file.errorString().toStdString();
     return false;
   }
-  if (file.write(QJsonDocument(QJsonObject{{"version", 1},
-                                           {"surveys", surveys},
-                                           {"videos", videos},
-                                           {"observations", observations}})
-                     .toJson(QJsonDocument::Compact)) < 0 ||
+  if (file.write(QJsonDocument(root).toJson(QJsonDocument::Compact)) < 0 ||
       !file.commit()) {
     error = file.errorString().toStdString();
     return false;

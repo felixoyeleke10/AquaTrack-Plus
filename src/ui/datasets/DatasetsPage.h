@@ -50,6 +50,8 @@ signals:
     // Sequences to add to the project; the window creates a project first
     // when none is open.
     void addToProjectRequested(QStringList sequencePaths);
+    // The Models page, its sibling in "Models & data".
+    void modelsRequested();
 
 private:
     void applyFilter();

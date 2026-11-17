@@ -217,8 +217,11 @@ DatasetsPage::DatasetsPage(QWidget* parent) : QWidget(parent)
     auto* titles = new QVBoxLayout;
     titles->setContentsMargins(0, 0, 0, 0);
     titles->setSpacing(1);
-    titles->addWidget(sectionLabel(QStringLiteral("Data catalog"), this));
-    titles->addWidget(typedLabel(QStringLiteral("Datasets"), "display", this));
+    // Datasets live beside the models trained on them.
+    titles->addWidget(segmentedSwitch({QStringLiteral("Models"), QStringLiteral("Training data")}, 1,
+                                      this, [this](int) { emit modelsRequested(); }));
+    titles->addSpacing(8);
+    titles->addWidget(typedLabel(QStringLiteral("Training data"), "display", this));
     m_rootLabel = typedLabel(QStringLiteral("No catalog scanned"), "dim", this);
     titles->addWidget(m_rootLabel);
     head->addLayout(titles);

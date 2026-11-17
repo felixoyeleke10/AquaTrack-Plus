@@ -38,6 +38,8 @@ signals:
     void importWeightsRequested();
     void refreshRequested();
     void activeDetectorRequested(QString modelId);
+    // The Datasets page, its sibling in "Models & data".
+    void datasetsRequested();
 
 private:
     void applyFilter();

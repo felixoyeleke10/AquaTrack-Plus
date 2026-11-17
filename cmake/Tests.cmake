@@ -172,3 +172,15 @@ add_executable(aquatrack-inspector-tabs-tests tests/ui/InspectorTabsTests.cpp te
 target_include_directories(aquatrack-inspector-tabs-tests PRIVATE ${PROJECT_SOURCE_DIR}/tests/unit/native)
 target_link_libraries(aquatrack-inspector-tabs-tests PRIVATE aquatrack-ui)
 add_test(NAME AquaTrackInspectorTabs COMMAND aquatrack-inspector-tabs-tests)
+
+add_executable(aquatrack-project-summary-tests
+    tests/unit/native/ProjectSummaryTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-project-summary-tests PRIVATE tests/unit/native)
+target_link_libraries(aquatrack-project-summary-tests PRIVATE aquatrack-application)
+add_test(NAME AquaTrackProjectSummary COMMAND aquatrack-project-summary-tests)
+
+add_executable(aquatrack-detection-merge-tests
+    tests/unit/native/DetectionMergeTests.cpp tests/unit/native/TestSupport.h)
+target_include_directories(aquatrack-detection-merge-tests PRIVATE tests/unit/native)
+target_link_libraries(aquatrack-detection-merge-tests PRIVATE aquatrack-application)
+add_test(NAME AquaTrackDetectionMerge COMMAND aquatrack-detection-merge-tests)

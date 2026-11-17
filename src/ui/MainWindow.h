@@ -12,6 +12,9 @@ class SettingsController;
 class DatasetController;
 struct ModelCandidate;
 } // namespace aquatrack::application
+namespace aquatrack::data {
+struct ModelEntry;
+}
 class AppHeader;
 class NavigationDock;
 class DashboardPage;
@@ -79,6 +82,14 @@ private:
   // Resolves the active detector and Python, then runs detection + tracking
   // over the media open in Review.
   void runAnalysis();
+  // Detectors Detect & track can run, and the one it will: the open
+  // project's choice when it is still usable, else the app's active one.
+  [[nodiscard]] QVector<const aquatrack::data::ModelEntry *> usableDetectors() const;
+  [[nodiscard]] QString effectiveDetectorId() const;
+  void refreshDetectorChoices();
+  // Makes `modelId` the detector: for the open project, and also as the
+  // app's active detector when `appDefault` (or when no project is open).
+  bool chooseDetector(const QString &modelId, bool appDefault);
   // Media already in the project that would share annotations with `path`
   // (same review name, different file); empty when there is none.
   [[nodiscard]] QString conflictingMedia(const QString &path) const;

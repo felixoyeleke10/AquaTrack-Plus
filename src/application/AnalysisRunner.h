@@ -20,6 +20,7 @@ struct AnalysisRequest {
     QString source;        // media path, as Review opened it
     QString weights;
     QString backend;       // "ultralytics", "torchvision", ...
+    QString modelId;       // registry id, recorded with the results
     QString modelName;
     QStringList classNames;  // the model's classes, in index order
     double confidence = 0.35;

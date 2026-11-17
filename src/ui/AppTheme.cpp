@@ -135,6 +135,11 @@ QPushButton {
 QPushButton:hover    { background: @surfaceHover; border-color: #2a3446; }
 QPushButton:pressed  { background: @surface; }
 QPushButton:disabled { background: @sunken; color: #3a4252; border-color: @lineSoft; }
+/* A button that opens a list of choices: the arrow sits centred on the right. */
+QPushButton#detectorPicker { padding-right: 26px; }
+QPushButton#detectorPicker::menu-indicator {
+    subcontrol-origin: padding; subcontrol-position: right center; right: 9px;
+}
 
 QPushButton[role="primary"] {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accentHover, stop:1 @accent);
@@ -186,6 +191,18 @@ QPushButton[role="chip"] {
     padding: 8px 10px; color: @textSecondary; font-size: 12px; text-align: left;
 }
 QPushButton[role="chip"]:hover { background: @surface; border-color: @accent; color: @text; }
+
+/* Segmented switch between sibling pages. */
+QFrame[role="segmented"] { background: @sunken; border: 1px solid @line; border-radius: 10px; }
+QPushButton[role="segment"] {
+    background: transparent; border: 1px solid transparent; border-radius: 7px;
+    padding: 5px 14px; color: @textSecondary; font-size: 12px; font-weight: 600;
+}
+QPushButton[role="segment"]:hover { color: @text; background: @surface; }
+QPushButton[role="segmentActive"] {
+    background: @surfaceRaised; border: 1px solid @line; border-radius: 7px;
+    padding: 5px 14px; color: @text; font-size: 12px; font-weight: 600;
+}
 
 /* A whole list row that acts as a button (event rows in the review rail). */
 QPushButton[role="row"] {

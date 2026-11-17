@@ -451,7 +451,9 @@ QWidget* DashboardPage::buildOverview()
     continueBody->addWidget(m_continue);
     row->addWidget(continueCard, 3);
 
-    // Survey progress: how much is verified, and what has been found.
+    // Survey progress: how much of the footage is verified, in review,
+    // detected only or not analysed, and what has been found. Footage that
+    // is in several media items is counted once (see ProjectSummary).
     auto* progressCard = card(content);
     auto* progress = new QVBoxLayout(progressCard);
     progress->setContentsMargins(20, 16, 20, 20);
@@ -476,8 +478,19 @@ QWidget* DashboardPage::buildOverview()
     m_verifiedCaption->setWordWrap(true);
     headline->addWidget(m_verifiedCaption, 1, Qt::AlignBottom);
     progress->addLayout(headline);
-    m_verifiedBar = new RatioBar(progressCard, 6);
-    progress->addWidget(m_verifiedBar);
+    m_stateBar = new SegmentBar(progressCard, 8);
+    m_stateBar->setToolTip(QStringLiteral("Footage time by review state"));
+    progress->addWidget(m_stateBar);
+    auto* states = new QGridLayout;
+    states->setContentsMargins(0, 2, 0, 0);
+    states->setHorizontalSpacing(16);
+    states->setVerticalSpacing(3);
+    for (int state = 0; state < 4; ++state) {
+        m_stateLabels[state] = typedLabel(QString(), "small", progressCard);
+        m_stateLabels[state]->setTextFormat(Qt::RichText);
+        states->addWidget(m_stateLabels[state], state / 2, state % 2);
+    }
+    progress->addLayout(states);
     progress->addSpacing(4);
 
     auto* figures = new QGridLayout;
@@ -501,6 +514,15 @@ QWidget* DashboardPage::buildOverview()
     m_speciesEmpty->setWordWrap(true);
     progress->addWidget(m_speciesEmpty);
     progress->addStretch();
+    m_overlapNote = typedLabel(
+        QStringLiteral("Footage that is in more than one media item is counted once."), "dim",
+        progressCard);
+    m_overlapNote->setWordWrap(true);
+    m_overlapNote->setToolTip(QStringLiteral(
+        "A video can be in the project on its own and as a clip of a sequence. Totals use each "
+        "video once, from whichever item has reviewed it most."));
+    m_overlapNote->hide();
+    progress->addWidget(m_overlapNote);
     row->addWidget(progressCard, 2);
     body->addLayout(row);
 
@@ -778,6 +800,16 @@ void DashboardPage::rebuildMedia()
         if (progress->clips > 1)
             meta += QStringLiteral("  \u00b7  ") +
                     count(progress->clips, QStringLiteral("clip"), QStringLiteral("clips"));
+        if (!progress->detector.isEmpty()) {
+            meta += QStringLiteral("  \u00b7  ") + progress->detector;
+            QString when;
+            if (progress->detectedAtMs > 0)
+                when = QStringLiteral(" on %1").arg(QLocale::system().toString(
+                    QDateTime::fromMSecsSinceEpoch(progress->detectedAtMs).date(),
+                    QLocale::ShortFormat));
+            item->setToolTip(QStringLiteral("%1\nDetected with %2%3")
+                                 .arg(QDir::toNativeSeparators(path), progress->detector, when));
+        }
         item->setData(MetaRole, meta);
         if (progress->durationMs > 0)
             item->setData(BadgeRole, duration(progress->durationMs));
@@ -868,16 +900,48 @@ void DashboardPage::applySummary(const ProjectSummary& summary)
     m_haveSummary = true;
     rebuildMedia();
 
+    using aquatrack::application::FootageState;
     const QLocale locale = QLocale::system();
     const bool any = summary.observations > 0;
-    m_verifiedPercent->setText(any ? percent(summary.verifiedRatio()) : QStringLiteral("\u2014"));
-    m_verifiedCaption->setText(
-        any ? QStringLiteral("of %1 verified by a reviewer")
-                  .arg(count(summary.observations, QStringLiteral("detection"),
-                             QStringLiteral("detections")))
-            : QStringLiteral("No detections yet"));
-    m_verifiedBar->setRatio(summary.verifiedRatio(),
-                            summary.verifiedRatio() >= 0.999 ? palette::Success : palette::Accent);
+
+    // Headline: how much of the footage a reviewer has fully verified. (A
+    // share of boxes would let one busy clip outweigh hours of footage.)
+    const qint64 verifiedMs = summary.msIn(FootageState::Verified);
+    if (summary.durationMs > 0) {
+        m_verifiedPercent->setText(percent(double(verifiedMs) / summary.durationMs));
+        m_verifiedCaption->setText(QStringLiteral("of the footage verified  \u00b7  %1 of %2")
+                                       .arg(duration(verifiedMs), duration(summary.durationMs)));
+    } else {
+        m_verifiedPercent->setText(any ? percent(summary.verifiedRatio()) : QStringLiteral("\u2014"));
+        m_verifiedCaption->setText(any ? QStringLiteral("of detections verified")
+                                       : QStringLiteral("No footage to measure yet"));
+    }
+
+    struct StateStyle {
+        FootageState state;
+        const char* label;
+        QColor colour;
+    };
+    const StateStyle styles[] = {
+        {FootageState::Verified, "Verified", palette::Success},
+        {FootageState::InReview, "In review", palette::Accent},
+        {FootageState::Detected, "Analysed, not reviewed", palette::Warning},
+        {FootageState::NotAnalysed, "Not analysed", palette::TextDim},
+    };
+    QVector<QPair<double, QColor>> segments;
+    for (int i = 0; i < 4; ++i) {
+        const qint64 ms = summary.msIn(styles[i].state);
+        segments.push_back({double(ms), styles[i].colour});
+        const double share = summary.durationMs > 0 ? double(ms) / summary.durationMs : 0.0;
+        m_stateLabels[i]->setText(
+            QStringLiteral("<span style='color:%1'>&#9679;</span>&nbsp; %2&nbsp;&nbsp;"
+                           "<span style='color:%3'>%4 &nbsp;%5</span>")
+                .arg(styles[i].colour.name(), QString::fromLatin1(styles[i].label),
+                     palette::TextDim.name(), duration(ms), percent(share)));
+    }
+    m_stateBar->setSegments(segments);
+    m_overlapNote->setVisible(summary.overlapping);
+
     m_figureDetections->setText(locale.toString(summary.observations));
     m_figureTracks->setText(locale.toString(summary.tracks));
     m_figureSpecies->setText(locale.toString(int(summary.species.size())));
@@ -896,13 +960,11 @@ void DashboardPage::updateHero()
     QStringList facts;
     facts << count(int(m_mediaPaths.size()), QStringLiteral("media item"), QStringLiteral("media items"));
     if (m_haveSummary) {
-        qint64 milliseconds = 0;
-        for (const auto& item : m_summary.media)
-            milliseconds += item.durationMs;
+        // Footage counted once, even when a video is also a sequence's clip.
         if (m_summary.frames > 0)
             facts << count(m_summary.frames, QStringLiteral("frame"), QStringLiteral("frames"));
-        if (milliseconds > 0)
-            facts << duration(milliseconds);
+        if (m_summary.durationMs > 0)
+            facts << duration(m_summary.durationMs);
         if (m_summary.observations > 0)
             facts << count(m_summary.observations, QStringLiteral("detection"),
                            QStringLiteral("detections"));

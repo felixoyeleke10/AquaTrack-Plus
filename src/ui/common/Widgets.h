@@ -5,7 +5,10 @@
 #include <QColor>
 #include <QFrame>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
+
+#include <functional>
 
 class QHBoxLayout;
 class QLabel;
@@ -26,6 +29,10 @@ namespace aquatrack::ui {
                                       const char* role = "icon", int size = 17);
 [[nodiscard]] QPushButton* textButton(const QString& text, QWidget* parent,
                                       const char* role = "");
+// A segmented switch between sibling pages ("Models | Training data"):
+// `current` is lit, and choosing another option calls `chosen` with its index.
+[[nodiscard]] QWidget* segmentedSwitch(const QStringList& labels, int current, QWidget* parent,
+                                       std::function<void(int)> chosen);
 
 // A rounded pill of text, e.g. "Processed" or "High Confidence".
 class Badge final : public QWidget {

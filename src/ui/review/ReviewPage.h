@@ -5,6 +5,7 @@
 #include "data/BrackishMotSequence.h"
 #include "data/media/MediaSource.h"
 #include "domain/ScientificTypes.h"
+#include "ui/review/center/ReviewPanel.h"
 
 #include <QHash>
 #include <QImage>
@@ -86,6 +87,10 @@ public:
     void startAnalysis(aquatrack::application::AnalysisRequest request);
     [[nodiscard]] bool isAnalysisRunning() const;
     void cancelAnalysis();
+    // The detectors Detect & track can use, and the one it will use.
+    // `forProject`: the choice is remembered by the open project.
+    void setDetectorChoices(const QVector<ReviewPanel::DetectorOption>& options,
+                            const QString& current, bool forProject);
 
 signals:
     // The observation set changed: a sequence loaded, the store switched,
@@ -95,6 +100,11 @@ signals:
     void sequenceOpened(QString directory);
     // The reviewer asked to detect and track; the window resolves the model.
     void analyzeRequested();
+    // The reviewer picked a detector next to Detect & track.
+    void detectorChosen(QString modelId);
+    void manageModelsRequested();
+    // A short note for the status bar.
+    void statusMessage(QString text);
 
 private:
     void startAnnotationSession();
@@ -112,9 +122,17 @@ private:
     void updateSequenceNavigator();
     void rebuildFrameIndex();
     void chooseAnnotationFile();
+    // `askFirst`: confirm before overwriting existing annotations.
     bool replaceObservations(const aquatrack::media::MediaSource& media,
                              std::vector<aquatrack::domain::Observation> observations,
-                             const QString& what);
+                             const QString& what, bool askFirst = true);
+    // Detector output for `media`: keeps verified boxes unless the reviewer
+    // chooses to replace everything. Returns false if nothing was applied.
+    bool applyDetections(const aquatrack::media::MediaSource& media,
+                         std::vector<aquatrack::domain::Observation> detections,
+                         const QString& what);
+    // Moves the recorded detector with annotations when media is renamed.
+    void carryDetector(const std::string& from, const std::string& to);
     void analysisFinished(const QString& resultsPath);
     [[nodiscard]] const std::vector<aquatrack::domain::Observation>& allObservations() const;
     [[nodiscard]] qint64 timestampFor(int frame) const;
@@ -126,6 +144,8 @@ private:
     std::unique_ptr<aquatrack::application::AnnotationController> m_annotationController;
     aquatrack::application::AnalysisRunner* m_analysis = nullptr;
     aquatrack::media::MediaSource m_analysisMedia;
+    QString m_analysisModelId;
+    QString m_analysisModelName;
 
     SurveyPanel* m_surveyPanel = nullptr;
     ReviewPanel* m_reviewPanel = nullptr;

@@ -7,6 +7,7 @@
 
 #include <QWidget>
 
+class QActionGroup;
 class QLabel;
 class QProgressBar;
 class QPushButton;
@@ -27,6 +28,12 @@ class ReviewPanel final : public QWidget {
     Q_OBJECT
 
 public:
+    // A detector Detect & track can run.
+    struct DetectorOption {
+        QString id;
+        QString name;
+    };
+
     explicit ReviewPanel(QWidget* parent = nullptr);
 
     [[nodiscard]] SequenceView* sequenceView() const { return m_view; }
@@ -41,7 +48,13 @@ public:
 
     // Header above the canvas: what is open, and where its boxes come from.
     void setMediaTitle(const QString& title, const QString& detail);
-    void setAnnotationSource(const QString& text, const QColor& accent);
+    // `details`: tooltip, for example which model produced the boxes.
+    void setAnnotationSource(const QString& text, const QColor& accent,
+                             const QString& details = {});
+    // The picker beside Detect & track. `forProject`: the open project
+    // remembers the choice (otherwise it is the app's active detector).
+    void setDetectorChoices(const QVector<DetectorOption>& options, const QString& current,
+                            bool forProject);
     void setMediaActionsEnabled(bool enabled);
     // Detection/tracking run state. `total` <= 0 shows a busy indicator.
     void setAnalysisRunning(bool running);
@@ -65,6 +78,8 @@ signals:
     void importAnnotationsRequested();
     void analyzeRequested();
     void analysisCancelRequested();
+    void detectorChosen(QString modelId);
+    void manageModelsRequested();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -87,6 +102,11 @@ private:
     QLabel* m_source = nullptr;
     QPushButton* m_import = nullptr;
     QPushButton* m_analyze = nullptr;
+    QPushButton* m_detector = nullptr;
+    QActionGroup* m_detectorGroup = nullptr;
+    QString m_detectorCurrent;
+    QString m_detectorName;
+    void updateDetectorButton();
     QWidget* m_progressRow = nullptr;
     QProgressBar* m_progress = nullptr;
     QLabel* m_progressText = nullptr;

@@ -441,6 +441,52 @@ void RatioBar::paintEvent(QPaintEvent*)
                             radius, radius);
 }
 
+// ------------------------------------------------------------ SegmentBar
+
+SegmentBar::SegmentBar(QWidget* parent, int height) : QWidget(parent)
+{
+    setProperty("role", "bare");
+    setFixedHeight(height);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+}
+
+void SegmentBar::setSegments(const QVector<QPair<double, QColor>>& segments)
+{
+    m_segments = segments;
+    update();
+}
+
+void SegmentBar::paintEvent(QPaintEvent*)
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const qreal radius = height() / 2.0;
+    QPainterPath track;
+    track.addRoundedRect(QRectF(rect()), radius, radius);
+    painter.fillPath(track, palette::LineSoft);
+
+    double total = 0;
+    for (const auto& segment : m_segments)
+        total += std::max(0.0, segment.first);
+    if (total <= 0)
+        return;
+    // Parts are clipped to the rounded track, so only the bar's two ends are
+    // round; a dark hairline separates neighbouring parts.
+    painter.save();
+    painter.setClipPath(track);
+    qreal x = 0;
+    for (const auto& segment : m_segments) {
+        if (segment.first <= 0)
+            continue;
+        const qreal width = this->width() * segment.first / total;
+        painter.fillRect(QRectF(x, 0, width, height()), segment.second);
+        x += width;
+        if (x < this->width() - 0.5)
+            painter.fillRect(QRectF(x - 1, 0, 2, height()), palette::Surface);
+    }
+    painter.restore();
+}
+
 // ---------------------------------------------------------- SpeciesChart
 
 namespace {

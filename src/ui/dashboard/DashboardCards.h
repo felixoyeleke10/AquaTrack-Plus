@@ -116,6 +116,20 @@ private:
     QColor m_fill;
 };
 
+// A rounded bar split into coloured parts by weight (e.g. footage time per
+// review state), with a hairline gap between parts.
+class SegmentBar final : public QWidget {
+public:
+    explicit SegmentBar(QWidget* parent = nullptr, int height = 8);
+    void setSegments(const QVector<QPair<double, QColor>>& segments);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    QVector<QPair<double, QColor>> m_segments;
+};
+
 // Species by number of individuals: colour dot, name, bar, count.
 class SpeciesChart final : public QWidget {
 public:

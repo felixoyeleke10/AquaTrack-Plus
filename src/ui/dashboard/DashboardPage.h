@@ -21,6 +21,7 @@ class CardGrid;
 class FramePreview;
 class HeroBanner;
 class RatioBar;
+class SegmentBar;
 class SpeciesChart;
 }  // namespace dashboard
 }  // namespace aquatrack::ui
@@ -117,7 +118,10 @@ private:
     QPushButton* m_continueButton = nullptr;
     QLabel* m_verifiedPercent = nullptr;
     QLabel* m_verifiedCaption = nullptr;
-    aquatrack::ui::dashboard::RatioBar* m_verifiedBar = nullptr;
+    // Footage by review state: verified, in review, detected, not analysed.
+    aquatrack::ui::dashboard::SegmentBar* m_stateBar = nullptr;
+    QLabel* m_stateLabels[4] = {};
+    QLabel* m_overlapNote = nullptr;
     QLabel* m_figureDetections = nullptr;
     QLabel* m_figureTracks = nullptr;
     QLabel* m_figureSpecies = nullptr;

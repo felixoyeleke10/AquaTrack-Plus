@@ -41,7 +41,7 @@ bool ProjectFileStore::save(const QString& path, const domain::ProjectManifest& 
                          ? projectFolder.relativeFilePath(absolute)
                          : value);
     }
-    const QJsonObject object{
+    QJsonObject object{
         {QStringLiteral("version"), manifest.schemaVersion},
         {QStringLiteral("projectId"), QString::fromStdString(manifest.projectId)},
         {QStringLiteral("name"), QString::fromStdString(manifest.name)},
@@ -50,6 +50,8 @@ bool ProjectFileStore::save(const QString& path, const domain::ProjectManifest& 
         {QStringLiteral("database"), QString::fromStdString(manifest.databasePath)},
         {QStringLiteral("media"), media},
     };
+    if (!manifest.detectorModelId.empty())
+        object.insert(QStringLiteral("detector"), QString::fromStdString(manifest.detectorModelId));
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         setError(error, file.errorString());
@@ -84,6 +86,7 @@ bool ProjectFileStore::load(const QString& path, domain::ProjectManifest& manife
     candidate.createdAtMs = object.value(QStringLiteral("createdAtMs")).toInteger(-1);
     candidate.updatedAtMs = object.value(QStringLiteral("updatedAtMs")).toInteger(-1);
     candidate.databasePath = object.value(QStringLiteral("database")).toString().toStdString();
+    candidate.detectorModelId = object.value(QStringLiteral("detector")).toString().toStdString();
     // Relative entries are inside the project folder; resolve them so the
     // rest of the application always works with absolute paths.
     const QDir projectFolder = QFileInfo(path).absoluteDir();

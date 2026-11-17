@@ -177,6 +177,9 @@ VideosPage::VideosPage(QWidget* parent) : QWidget(parent)
             &VideosPage::addMediaRequested);
     connect(videoMenu->addAction(QStringLiteral("Add every video in a folder...")),
             &QAction::triggered, this, &VideosPage::addVideoFolderRequested);
+    videoMenu->addSeparator();
+    connect(videoMenu->addAction(QStringLiteral("Add sequences from a dataset...")),
+            &QAction::triggered, this, &VideosPage::addFromDatasetRequested);
     m_addVideo->setMenu(videoMenu);
     head->addWidget(m_addVideo, 0, Qt::AlignBottom);
 

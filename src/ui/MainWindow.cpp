@@ -255,6 +255,9 @@ MainWindow::MainWindow(QWidget *parent)
   });
   connect(m_dashboard, &DashboardPage::addSequenceFolderRequested, this,
           &MainWindow::addSequenceFolder);
+  // The Videos page offers the same route to dataset sequences.
+  connect(m_videos, &VideosPage::addFromDatasetRequested, m_dashboard,
+          &DashboardPage::browseDatasetsRequested);
   connect(m_dashboard, &DashboardPage::browseDatasetsRequested, this, [this] {
     // Straight to the catalog if one is open; otherwise ask for its root.
     if (!m_datasetController->root().isEmpty()) {
@@ -315,6 +318,23 @@ MainWindow::MainWindow(QWidget *parent)
   // on the dashboard and the analytics page.
   connect(m_review, &ReviewPage::sequenceOpened, this, &MainWindow::includeInProject);
   connect(m_review, &ReviewPage::analyzeRequested, this, &MainWindow::runAnalysis);
+  connect(m_review, &ReviewPage::detectorChosen, this, [this](const QString &modelId) {
+    if (!chooseDetector(modelId, false))
+      return;
+    QString name = modelId;
+    for (const auto *entry : usableDetectors())
+      if (QString::fromStdString(entry->manifest.id) == modelId)
+        name = QString::fromStdString(entry->manifest.displayName);
+    statusBar()->showMessage(
+        m_projectController->project()
+            ? QStringLiteral("This project now detects with %1").arg(name)
+            : QStringLiteral("Active detector set to %1").arg(name),
+        5000);
+  });
+  connect(m_review, &ReviewPage::manageModelsRequested, this,
+          [this] { m_appState->setCurrentPage(Page::Models); });
+  connect(m_review, &ReviewPage::statusMessage, this,
+          [this](const QString &text) { statusBar()->showMessage(text, 8000); });
   connect(m_review, &ReviewPage::observationsChanged, this, [this] {
     refreshDashboard();
     refreshAnalytics();
@@ -354,6 +374,7 @@ MainWindow::MainWindow(QWidget *parent)
           for (const auto &path : project->mediaPaths)
             media << QString::fromStdString(path);
         m_datasets->setProjectMedia(project != nullptr, media);
+        refreshDetectorChoices();
         refreshDashboard();
         statusBar()->showMessage(
             project ? QStringLiteral("Project ready: %1")
@@ -513,6 +534,10 @@ MainWindow::MainWindow(QWidget *parent)
       candidates.push_back(aquatrack::application::ModelImporter::describe(file));
     importModelCandidates(std::move(candidates));
   });
+  connect(m_models, &ModelsPage::datasetsRequested, this,
+          [this] { m_appState->setCurrentPage(Page::Datasets); });
+  connect(m_datasets, &DatasetsPage::modelsRequested, this,
+          [this] { m_appState->setCurrentPage(Page::Models); });
   connect(m_models, &ModelsPage::refreshRequested, m_modelController,
           &aquatrack::application::ModelController::rescan);
   connect(m_modelController,
@@ -521,8 +546,7 @@ MainWindow::MainWindow(QWidget *parent)
             m_models->setRegistry(m_modelController->root(),
                                   m_modelController->entries(),
                                   m_modelController->warnings());
-            m_models->setActiveDetector(QString::fromStdString(
-                m_settingsController->settings().detection.modelId));
+            refreshDetectorChoices();
             refreshDashboard();
             refreshWarnings();
           });
@@ -530,18 +554,11 @@ MainWindow::MainWindow(QWidget *parent)
   // detection.modelId; the settings page has no field for it.
   connect(m_models, &ModelsPage::activeDetectorRequested, this,
           [this](const QString &modelId) {
-            auto updated = m_settingsController->settings();
-            updated.detection.modelId = modelId.toStdString();
-            QString error;
-            if (!m_settingsController->save(updated, &error)) {
-              QMessageBox::warning(this,
-                                   QStringLiteral("Could not save active model"),
-                                   error);
-              return;
-            }
-            m_models->setActiveDetector(modelId);
-            statusBar()->showMessage(
-                QStringLiteral("Active detector set to %1").arg(modelId), 4000);
+            // "Active" means everywhere: the app default and, so the choice
+            // takes effect now, the open project's too.
+            if (chooseDetector(modelId, true))
+              statusBar()->showMessage(
+                  QStringLiteral("Active detector set to %1").arg(modelId), 4000);
           });
 
   // ---- Settings -------------------------------------------------------
@@ -553,8 +570,7 @@ MainWindow::MainWindow(QWidget *parent)
         m_review->setFrameCacheSize(m_settingsController->settings().video.frameBufferSize);
         m_export->setIncludeUnverified(
             m_settingsController->settings().exportSettings.includeUnverified);
-        m_models->setActiveDetector(QString::fromStdString(
-            m_settingsController->settings().detection.modelId));
+        refreshDetectorChoices();
         refreshDashboard();
       });
   connect(m_settings, &SettingsPage::saveRequested, this, [this] {
@@ -1176,16 +1192,12 @@ void MainWindow::runAnalysis() {
 
   // The detector: the active one if it is usable, else let the reviewer
   // choose among the usable detectors in the registry.
-  const auto &entries = m_modelController->entries();
+  const auto usable = usableDetectors();
+  const QString active = effectiveDetectorId();
   const aquatrack::data::ModelEntry *chosen = nullptr;
-  QVector<const aquatrack::data::ModelEntry *> usable;
-  for (const auto &entry : entries) {
-    if (!entry.isUsable() || entry.manifest.type != aquatrack::models::ModelType::Detector)
-      continue;
-    usable.push_back(&entry);
-    if (entry.manifest.id == settings.detection.modelId)
-      chosen = &entry;
-  }
+  for (const auto *entry : usable)
+    if (QString::fromStdString(entry->manifest.id) == active)
+      chosen = entry;
   if (!chosen) {
     if (usable.isEmpty()) {
       const auto answer = QMessageBox::question(
@@ -1208,10 +1220,7 @@ void MainWindow::runAnalysis() {
     if (!accepted)
       return;
     chosen = usable.at(names.indexOf(picked));
-    auto updated = settings;
-    updated.detection.modelId = chosen->manifest.id;
-    m_settingsController->save(updated);
-    m_models->setActiveDetector(QString::fromStdString(chosen->manifest.id));
+    chooseDetector(QString::fromStdString(chosen->manifest.id), false);
   }
 
   aquatrack::application::AnalysisRequest request;
@@ -1225,6 +1234,7 @@ void MainWindow::runAnalysis() {
   const auto &manifest = chosen->manifest;
   request.weights = chosen->artifactPath;
   request.backend = QString::fromStdString(manifest.backend);
+  request.modelId = QString::fromStdString(manifest.id);
   request.modelName = QString::fromStdString(manifest.displayName);
   for (const auto &name : manifest.classes)
     request.classNames << QString::fromStdString(name);
@@ -1245,6 +1255,58 @@ void MainWindow::runAnalysis() {
   }
   m_appState->setCurrentPage(Page::Review);
   m_review->startAnalysis(request);
+}
+
+QVector<const aquatrack::data::ModelEntry *> MainWindow::usableDetectors() const {
+  QVector<const aquatrack::data::ModelEntry *> usable;
+  for (const auto &entry : m_modelController->entries())
+    if (entry.isUsable() && entry.manifest.type == aquatrack::models::ModelType::Detector)
+      usable.push_back(&entry);
+  return usable;
+}
+
+QString MainWindow::effectiveDetectorId() const {
+  if (const auto *project = m_projectController->project();
+      project && !project->detectorModelId.empty()) {
+    // A project's choice that has since been removed from the registry
+    // falls back to the app's rather than blocking detection.
+    for (const auto *entry : usableDetectors())
+      if (entry->manifest.id == project->detectorModelId)
+        return QString::fromStdString(project->detectorModelId);
+  }
+  return QString::fromStdString(m_settingsController->settings().detection.modelId);
+}
+
+void MainWindow::refreshDetectorChoices() {
+  QVector<ReviewPanel::DetectorOption> options;
+  for (const auto *entry : usableDetectors())
+    options.push_back({QString::fromStdString(entry->manifest.id),
+                       QString::fromStdString(entry->manifest.displayName.empty()
+                                                  ? entry->manifest.id
+                                                  : entry->manifest.displayName)});
+  const QString active = effectiveDetectorId();
+  m_review->setDetectorChoices(options, active, m_projectController->project() != nullptr);
+  m_models->setActiveDetector(active);
+}
+
+bool MainWindow::chooseDetector(const QString &modelId, bool appDefault) {
+  QString error;
+  if (m_projectController->project() &&
+      !m_projectController->setDetector(modelId, &error)) {
+    QMessageBox::warning(this, QStringLiteral("Could not save the project's detector"), error);
+    return false;
+  }
+  if (appDefault || !m_projectController->project()) {
+    auto updated = m_settingsController->settings();
+    updated.detection.modelId = modelId.toStdString();
+    if (!m_settingsController->save(updated, &error)) {
+      QMessageBox::warning(this, QStringLiteral("Could not save active model"), error);
+      return false;
+    }
+  }
+  // Saving settings refreshes the choices too; a project-only change does not.
+  refreshDetectorChoices();
+  return true;
 }
 
 QString MainWindow::conflictingMedia(const QString &path) const {
@@ -1610,9 +1672,10 @@ void MainWindow::showHelp() {
           "<li>Finish on the Export page: CSV for analysis or MOTChallenge for tracker "
           "benchmarks.</li></ol>"
           "<b>Navigation</b><br>"
-          "The dock at the bottom follows the workflow, left to right: Dashboard, then "
-          "Datasets, Videos and Models to prepare, Review and Analytics to analyse, and "
-          "Export to deliver. Settings and help are in the title bar.<br><br>"
+          "The page bar at the bottom follows the workflow, left to right: Dashboard, then "
+          "Videos and Models to prepare (training data sits with the models), Review and "
+          "Analytics to analyse, and Export to deliver. Settings and help are in the title "
+          "bar.<br><br>"
           "<b>Review controls</b><br>"
           "Space or K plays and pauses; Left/Right step one frame, Shift+Left/Right one "
           "second; Home/End jump to the ends. Click or drag the timeline to seek; click a "

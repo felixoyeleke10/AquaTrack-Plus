@@ -127,7 +127,9 @@ ModelsPage::ModelsPage(QWidget* parent) : QWidget(parent)
     auto* titles = new QVBoxLayout;
     titles->setContentsMargins(0, 0, 0, 0);
     titles->setSpacing(1);
-    titles->addWidget(sectionLabel(QStringLiteral("Model registry"), this));
+    titles->addWidget(segmentedSwitch({QStringLiteral("Models"), QStringLiteral("Training data")}, 0,
+                                      this, [this](int) { emit datasetsRequested(); }));
+    titles->addSpacing(8);
     titles->addWidget(typedLabel(QStringLiteral("Models"), "display", this));
     m_rootLabel = typedLabel(QStringLiteral("No registry open"), "dim", this);
     titles->addWidget(m_rootLabel);

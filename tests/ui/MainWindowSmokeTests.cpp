@@ -26,11 +26,14 @@ int main(int argc, char *argv[]) {
   for (const char *name : {"captionMinimize", "captionMaximize", "captionClose"})
     requireTest(window.findChild<QPushButton *>(QString::fromLatin1(name)) != nullptr,
                 "caption button present");
+  // Review can switch detectors without going to the Models page.
+  auto *picker = window.findChild<QPushButton *>(QStringLiteral("detectorPicker"));
+  requireTest(picker != nullptr && picker->menu() != nullptr, "detector picker beside Detect & track");
   auto *dock = window.findChild<NavigationDock *>();
   requireTest(dock != nullptr, "navigation dock exists");
   // The dock runs in workflow order and ends on Export; Settings is a
   // utility in the title bar, not a workflow step.
-  const char *workflow[] = {"navDashboard", "navDatasets", "navVideos", "navModels",
+  const char *workflow[] = {"navDashboard", "navVideos", "navModels",
                             "navReview",    "navAnalytics", "navExport"};
   int previousSlot = -1;
   for (const char *name : workflow) {
@@ -43,6 +46,9 @@ int main(int argc, char *argv[]) {
   }
   requireTest(dock->findChild<QPushButton *>(QStringLiteral("navSettings")) == nullptr,
               "settings is not a dock step");
+  // Training data is part of "Models & data", not a step of every survey.
+  requireTest(dock->findChild<QPushButton *>(QStringLiteral("navDatasets")) == nullptr,
+              "datasets is reached through Models, not the dock");
   requireTest(window.findChild<QPushButton *>(QStringLiteral("settingsButton")) != nullptr,
               "settings sits in the title bar");
   requireTest(window.findChild<QPushButton *>(QStringLiteral("projectChip")) != nullptr,

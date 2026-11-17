@@ -1,6 +1,7 @@
 #include "ui/review/ReviewPage.h"
 
 #include "application/AnnotationImporter.h"
+#include "application/DetectionMerge.h"
 #include "application/controllers/AnnotationController.h"
 #include "application/controllers/ReviewController.h"
 #include "data/media/FrameDecoder.h"
@@ -12,6 +13,7 @@
 #include "ui/review/left/SurveyPanel.h"
 #include "ui/review/right/InsightPanel.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -21,6 +23,7 @@
 #include <QInputDialog>
 #include <QLocale>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QPointer>
 #include <QShortcut>
 #include <QVBoxLayout>
@@ -120,6 +123,9 @@ ReviewPage::ReviewPage(QWidget* parent)
         emit analyzeRequested();
     });
     connect(m_reviewPanel, &ReviewPanel::analysisCancelRequested, this, &ReviewPage::cancelAnalysis);
+    connect(m_reviewPanel, &ReviewPanel::detectorChosen, this, &ReviewPage::detectorChosen);
+    connect(m_reviewPanel, &ReviewPanel::manageModelsRequested, this,
+            &ReviewPage::manageModelsRequested);
 
     // ---- Keyboard -----------------------------------------------------
     const auto shortcut = [this](const QKeySequence& keys, auto&& action) {
@@ -310,6 +316,7 @@ bool ReviewPage::migrateAnnotations(const QString& fromId, const QString& toId, 
             observation.id = to + observation.id.substr(from.size());
     }
     std::string message;
+    carryDetector(from, to);
     if (!m_repository->replaceObservationsForVideo(to, moved, message) ||
         !m_repository->removeVideo(from, message)) {
         if (error)
@@ -344,6 +351,8 @@ bool ReviewPage::replaceStoredObservations(const QString& fromId, const QString&
             observation.id = to + observation.id.substr(from.size());
     }
     std::string message;
+    if (from != to)
+        carryDetector(from, to);
     bool ok = m_repository->replaceObservationsForVideo(to, observations, message);
     if (ok && from != to)
         ok = m_repository->removeVideo(from, message);
@@ -416,15 +425,31 @@ void ReviewPage::refreshHeader()
         if (!observation.humanVerified)
             ++unverified;
     }
+    // Which model the boxes came from, when a run recorded it.
+    QString detector;
+    QString provenance;
+    if (m_repository)
+        if (const auto run = m_repository->detectorFor(source.name().toStdString())) {
+            detector = QString::fromStdString(run->modelName.empty() ? run->modelId
+                                                                     : run->modelName);
+            provenance = QStringLiteral("Detected with %1").arg(detector);
+            if (run->atMs > 0)
+                provenance += QStringLiteral(" on %1").arg(locale.toString(
+                    QDateTime::fromMSecsSinceEpoch(run->atMs), QLocale::ShortFormat));
+            if (!run->modelId.empty() && run->modelName != run->modelId)
+                provenance +=
+                    QStringLiteral("\nModel id: %1").arg(QString::fromStdString(run->modelId));
+        }
+    const QString trackCount = locale.toString(int(tracks.size()));
     if (unverified > 0)
         m_reviewPanel->setAnnotationSource(
-            QStringLiteral("Model detections · %1 tracks").arg(locale.toString(int(tracks.size()))),
-            aquatrack::ui::palette::Warning);
+            detector.isEmpty() ? QStringLiteral("Model detections · %1 tracks").arg(trackCount)
+                               : QStringLiteral("%1 · %2 tracks").arg(detector, trackCount),
+            aquatrack::ui::palette::Warning, provenance);
     else
         m_reviewPanel->setAnnotationSource(
-            QStringLiteral("Verified annotations · %1 tracks")
-                .arg(locale.toString(int(tracks.size()))),
-            aquatrack::ui::palette::Success);
+            QStringLiteral("Verified annotations · %1 tracks").arg(trackCount),
+            aquatrack::ui::palette::Success, provenance);
 }
 
 void ReviewPage::updateSequenceNavigator()
@@ -1017,6 +1042,12 @@ bool ReviewPage::importAnnotations(const QString& file)
     const std::size_t count = imported.observations.size();
     if (!replaceObservations(source, std::move(imported.observations), what))
         return false;
+    // The boxes now come from the file, not from a detector.
+    if (m_repository) {
+        std::string message;
+        if (m_repository->setDetector(source.name().toStdString(), std::nullopt, message))
+            refreshHeader();
+    }
     QString note;
     if (imported.outOfRange > 0)
         note += QStringLiteral(" %1 rows were for frames past the end of the media and were left out.")
@@ -1032,7 +1063,7 @@ bool ReviewPage::importAnnotations(const QString& file)
 
 bool ReviewPage::replaceObservations(const media::MediaSource& media,
                                      std::vector<domain::Observation> observations,
-                                     const QString& what)
+                                     const QString& what, bool askFirst)
 {
     if (!m_repository || !m_annotationController)
         return false;
@@ -1043,7 +1074,7 @@ bool ReviewPage::replaceObservations(const media::MediaSource& media,
 
     const std::size_t existing = onScreen ? allObservations().size()
                                           : m_repository->observationsForVideo(videoId).size();
-    if (existing > 0) {
+    if (askFirst && existing > 0) {
         const auto answer = QMessageBox::question(
             this, QStringLiteral("Replace annotations?"),
             QStringLiteral("%1 already has %2 annotations. Replace them with %3?\n\n"
@@ -1075,6 +1106,8 @@ void ReviewPage::startAnalysis(aquatrack::application::AnalysisRequest request)
     if (m_analysis->isRunning() || !m_controller->isLoaded())
         return;
     m_analysisMedia = m_controller->source();
+    m_analysisModelId = request.modelId;
+    m_analysisModelName = request.modelName;
     request.source = m_analysisMedia.path();
     if (request.output.isEmpty()) {
         const QString folder = m_annotationsFolder.isEmpty() ? QDir::tempPath() : m_annotationsFolder;
@@ -1118,5 +1151,91 @@ void ReviewPage::analysisFinished(const QString& resultsPath)
                 .arg(result.modelName, m_analysisMedia.name()));
         return;
     }
-    replaceObservations(m_analysisMedia, std::move(result.observations), what);
+    applyDetections(m_analysisMedia, std::move(result.observations), what);
+}
+
+bool ReviewPage::applyDetections(const media::MediaSource& media,
+                                 std::vector<domain::Observation> detections, const QString& what)
+{
+    if (!m_repository || !m_annotationController)
+        return false;
+    const std::string videoId = media.name().toStdString();
+    const bool onScreen = videoId == m_videoId && m_controller->isLoaded();
+    if (onScreen && !maybeSaveAnnotations())
+        return false;
+    const std::vector<domain::Observation> existing =
+        onScreen ? allObservations() : m_repository->observationsForVideo(videoId);
+    const auto verified = std::count_if(existing.begin(), existing.end(),
+                                        [](const auto& item) { return item.humanVerified; });
+
+    const QLocale locale = QLocale::system();
+    bool applied = false;
+    QString note;
+    if (verified == 0) {
+        // Nothing reviewed to lose: the usual replace (asks if boxes exist).
+        applied = replaceObservations(media, std::move(detections), what);
+    } else {
+        // Review work is at stake: keeping it is the default.
+        const auto unverified = qlonglong(existing.size()) - qlonglong(verified);
+        QMessageBox box(QMessageBox::Question, QStringLiteral("Keep your verified boxes?"),
+                        QStringLiteral("%1 has %2 boxes you verified and %3 unverified model boxes.")
+                            .arg(media.name(), locale.toString(qlonglong(verified)),
+                                 locale.toString(unverified)),
+                        QMessageBox::NoButton, this);
+        box.setInformativeText(
+            QStringLiteral("Keep the verified boxes and replace only the unverified ones with %1? "
+                           "New detections that overlap a verified box are skipped, and a track "
+                           "that follows a verified fish keeps its ID.\n\n"
+                           "Replacing everything discards your review of this media.")
+                .arg(what));
+        auto* keep = box.addButton(QStringLiteral("Keep verified, replace the rest"),
+                                   QMessageBox::AcceptRole);
+        auto* everything = box.addButton(QStringLiteral("Replace everything"),
+                                         QMessageBox::DestructiveRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(keep);
+        box.exec();
+        if (box.clickedButton() == keep) {
+            auto merge = aquatrack::application::mergeDetections(existing, std::move(detections));
+            note = QStringLiteral("Kept %1 verified boxes, added %2 new detections")
+                       .arg(locale.toString(merge.keptVerified), locale.toString(merge.added));
+            if (merge.continuedTracks > 0)
+                note += QStringLiteral(" (%1 tracks continue a verified ID)")
+                            .arg(locale.toString(merge.continuedTracks));
+            applied = replaceObservations(media, std::move(merge.observations), what, false);
+        } else if (box.clickedButton() == everything) {
+            applied = replaceObservations(media, std::move(detections), what, false);
+        }
+    }
+    if (!applied)
+        return false;
+
+    std::string message;
+    const aquatrack::data::DetectorRun run{m_analysisModelId.toStdString(),
+                                           m_analysisModelName.toStdString(),
+                                           QDateTime::currentMSecsSinceEpoch()};
+    if (m_repository->setDetector(videoId, run, message)) {
+        if (onScreen)
+            refreshHeader();
+        emit observationsChanged();
+    }
+    if (note.isEmpty())
+        note = QStringLiteral("Loaded %1").arg(what);
+    emit statusMessage(note);
+    return true;
+}
+
+void ReviewPage::carryDetector(const std::string& from, const std::string& to)
+{
+    if (!m_repository || from == to)
+        return;
+    std::string message;
+    if (const auto run = m_repository->detectorFor(from))
+        (void)m_repository->setDetector(to, run, message);
+}
+
+void ReviewPage::setDetectorChoices(const QVector<ReviewPanel::DetectorOption>& options,
+                                    const QString& current, bool forProject)
+{
+    m_reviewPanel->setDetectorChoices(options, current, forProject);
 }

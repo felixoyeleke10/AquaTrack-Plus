@@ -5,6 +5,8 @@ add_library(aquatrack-application
     src/application/AnnotationImporter.h
     src/application/AppState.cpp
     src/application/AppState.h
+    src/application/DetectionMerge.cpp
+    src/application/DetectionMerge.h
     src/application/MediaImporter.cpp
     src/application/MediaImporter.h
     src/application/ModelImporter.cpp

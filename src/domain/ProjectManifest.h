@@ -17,6 +17,9 @@ struct ProjectManifest {
   TimestampMs updatedAtMs = 0;
   std::string databasePath = "observations.json";
   std::vector<std::string> mediaPaths;
+  // The detector this project runs, overriding the app's active detector;
+  // empty to use the app's.
+  std::string detectorModelId;
 };
 
 [[nodiscard]] bool isValid(const ProjectManifest &manifest,

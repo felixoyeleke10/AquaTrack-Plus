@@ -63,6 +63,26 @@ QPushButton* textButton(const QString& text, QWidget* parent, const char* role)
     return button;
 }
 
+QWidget* segmentedSwitch(const QStringList& labels, int current, QWidget* parent,
+                         std::function<void(int)> chosen)
+{
+    auto* frame = new QFrame(parent);
+    frame->setProperty("role", "segmented");
+    auto* row = new QHBoxLayout(frame);
+    row->setContentsMargins(3, 3, 3, 3);
+    row->setSpacing(2);
+    for (int index = 0; index < labels.size(); ++index) {
+        auto* option = new QPushButton(labels.at(index), frame);
+        option->setProperty("role", index == current ? "segmentActive" : "segment");
+        option->setCursor(index == current ? Qt::ArrowCursor : Qt::PointingHandCursor);
+        if (index != current)
+            QObject::connect(option, &QPushButton::clicked, frame, [chosen, index] { chosen(index); });
+        row->addWidget(option);
+    }
+    frame->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    return frame;
+}
+
 // ---------------------------------------------------------------- Badge
 
 Badge::Badge(QWidget* parent) : QWidget(parent), m_accent(palette::Success) {}

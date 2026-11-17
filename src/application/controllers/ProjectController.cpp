@@ -99,6 +99,33 @@ bool ProjectController::addMedia(const QString &path, QString *error) {
   return true;
 }
 
+bool ProjectController::setDetector(const QString &modelId, QString *error) {
+  if (!m_manifest) {
+    if (error)
+      *error = QStringLiteral("No project is open");
+    return false;
+  }
+  const std::string id = modelId.toStdString();
+  if (m_manifest->detectorModelId == id)
+    return true;
+  const std::string previous = m_manifest->detectorModelId;
+  m_manifest->detectorModelId = id;
+  // Written to disk now, like other settings, rather than waiting for Save.
+  // Only this field: unsaved media edits stay unsaved.
+  domain::ProjectManifest onDisk;
+  if (m_store.load(m_path, onDisk)) {
+    onDisk.detectorModelId = id;
+    if (m_store.save(m_path, onDisk, error))
+      return true;
+  } else if (!m_dirty && m_store.save(m_path, *m_manifest, error)) {
+    return true;
+  }
+  if (error && error->isEmpty())
+    *error = QStringLiteral("Could not save the project file");
+  m_manifest->detectorModelId = previous;
+  return false;
+}
+
 bool ProjectController::removeMedia(const QString &path, QString *error) {
   if (!m_manifest) {
     if (error)

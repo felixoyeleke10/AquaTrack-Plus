@@ -6,11 +6,13 @@
 #include "ui/common/Widgets.h"
 #include "ui/review/center/video/SequenceView.h"
 
+#include <QActionGroup>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
+#include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -254,6 +256,14 @@ QWidget* ReviewPanel::buildHeader()
     connect(m_import, &QPushButton::clicked, this, &ReviewPanel::importAnnotationsRequested);
     row->addWidget(m_import, 0, Qt::AlignVCenter);
 
+    // Which detector Detect & track runs, switchable without leaving Review.
+    m_detector = textButton(QStringLiteral("No detector"), header);
+    m_detector->setObjectName(QStringLiteral("detectorPicker"));
+    m_detector->setIcon(glyphIcon(Glyph::Models, 15, palette::TextSecondary, palette::TextPrimary));
+    m_detector->setMenu(new QMenu(m_detector));
+    row->addWidget(m_detector, 0, Qt::AlignVCenter);
+    setDetectorChoices({}, {}, false);
+
     m_analyze = textButton(QStringLiteral("Detect && track"), header, "primary");
     m_analyze->setObjectName(QStringLiteral("analyzeMedia"));
     m_analyze->setIcon(glyphIcon(Glyph::Sparkle, 15, Qt::white, Qt::white));
@@ -307,12 +317,14 @@ void ReviewPanel::fitHeaderText()
     fit(m_detail, m_detailText);
 }
 
-void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent)
+void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent,
+                                      const QString& details)
 {
     m_sourceText = text;
-    m_source->setToolTip(text);
+    m_source->setToolTip(details.isEmpty() ? text : text + QStringLiteral("\n") + details);
     m_source->setVisible(!text.isEmpty() && !m_compactHeader);
-    m_source->setText(text);
+    // A long model name must not push the buttons off the header.
+    m_source->setText(m_source->fontMetrics().elidedText(text, Qt::ElideMiddle, 240));
     m_source->setStyleSheet(
         QStringLiteral("padding:3px 9px;border-radius:9px;font-weight:600;color:%1;"
                        "background:rgba(%2,%3,%4,38);border:1px solid rgba(%2,%3,%4,110)")
@@ -320,6 +332,61 @@ void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent)
             .arg(accent.red())
             .arg(accent.green())
             .arg(accent.blue()));
+}
+
+void ReviewPanel::setDetectorChoices(const QVector<DetectorOption>& options,
+                                     const QString& current, bool forProject)
+{
+    QMenu* menu = m_detector->menu();
+    menu->clear();
+    if (m_detectorGroup)
+        m_detectorGroup->deleteLater();
+    m_detectorGroup = new QActionGroup(menu);
+    m_detectorCurrent = current;
+    m_detectorName.clear();
+
+    menu->addSection(forProject ? QStringLiteral("Detector for this project")
+                                : QStringLiteral("Detector"));
+    for (const auto& option : options) {
+        QAction* action = menu->addAction(QString(option.name).replace(QLatin1Char('&'), QStringLiteral("&&")));
+        action->setCheckable(true);
+        action->setChecked(option.id == current);
+        action->setToolTip(option.id);
+        m_detectorGroup->addAction(action);
+        if (option.id == current)
+            m_detectorName = option.name;
+        connect(action, &QAction::triggered, this, [this, id = option.id] {
+            if (id != m_detectorCurrent)
+                emit detectorChosen(id);
+        });
+    }
+    if (options.isEmpty())
+        menu->addAction(QStringLiteral("No usable detectors in the registry"))->setEnabled(false);
+    menu->addSeparator();
+    menu->addAction(options.isEmpty() ? QStringLiteral("Import models...")
+                                      : QStringLiteral("Manage models..."),
+                    this, &ReviewPanel::manageModelsRequested);
+
+    if (m_detectorName.isEmpty())
+        m_detectorName = options.isEmpty() ? QStringLiteral("No detector")
+                                           : QStringLiteral("Choose a detector");
+    m_detector->setToolTip(
+        m_detectorName == QStringLiteral("No detector")
+            ? QStringLiteral("Import a fish detector on the Models page to run Detect & track")
+            : QStringLiteral("Detect & track runs %1%2. Click to switch.")
+                  .arg(m_detectorName, forProject ? QStringLiteral(" in this project")
+                                                  : QString()));
+    updateDetectorButton();
+}
+
+void ReviewPanel::updateDetectorButton()
+{
+    // Narrow headers keep only the icon; the name stays in the tooltip.
+    m_detector->setText(m_compactHeader
+                            ? QString()
+                            : m_detector->fontMetrics()
+                                  .elidedText(m_detectorName, Qt::ElideRight, 170)
+                                  .replace(QLatin1Char('&'), QStringLiteral("&&")));
 }
 
 void ReviewPanel::resizeEvent(QResizeEvent* event)
@@ -337,6 +404,7 @@ void ReviewPanel::setCompactHeader(bool compact)
     m_compactHeader = compact;
     m_import->setText(compact ? QString() : QStringLiteral("Import annotations"));
     m_analyze->setText(compact ? QStringLiteral("Detect") : QStringLiteral("Detect && track"));
+    updateDetectorButton();
     m_source->setVisible(!m_sourceText.isEmpty() && !compact);
 }
 
@@ -344,6 +412,7 @@ void ReviewPanel::setMediaActionsEnabled(bool enabled)
 {
     m_import->setEnabled(enabled && !m_analysisRunning);
     m_analyze->setEnabled(enabled && !m_analysisRunning);
+    m_detector->setEnabled(!m_analysisRunning);
 }
 
 void ReviewPanel::setAnalysisRunning(bool running)
