@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QProgressBar>
@@ -21,6 +22,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
+#include <QSplitterHandle>
 #include <QStyle>
 #include <QTabBar>
 #include <QStackedWidget>
@@ -147,6 +149,60 @@ protected:
     }
 };
 
+// The handle between the picture and the log: a short grip in the middle
+// of the gap, so it reads as something to drag, brighter while hovered or
+// dragged.
+class GripHandle final : public QSplitterHandle {
+public:
+    GripHandle(Qt::Orientation orientation, QSplitter* parent)
+        : QSplitterHandle(orientation, parent)
+    {
+        setAttribute(Qt::WA_Hover);
+        setToolTip(QStringLiteral("Drag to resize the log; drag to the bottom to hide it"));
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const bool active = underMouse() || m_dragging;
+        if (active) {
+            // A hairline across, so it is clear the whole gap is the handle.
+            painter.fillRect(QRectF(0, height() / 2.0 - 0.5, width(), 1),
+                             QColor(palette::Accent.red(), palette::Accent.green(),
+                                    palette::Accent.blue(), 90));
+        }
+        const QRectF grip(width() / 2.0 - 18, height() / 2.0 - 2, 36, 4);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(active ? palette::AccentHover : palette::Line);
+        painter.drawRoundedRect(grip, 2, 2);
+    }
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        m_dragging = true;
+        update();
+        QSplitterHandle::mousePressEvent(event);
+    }
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        m_dragging = false;
+        update();
+        QSplitterHandle::mouseReleaseEvent(event);
+    }
+
+private:
+    bool m_dragging = false;
+};
+
+class GripSplitter final : public QSplitter {
+public:
+    using QSplitter::QSplitter;
+
+protected:
+    QSplitterHandle* createHandle() override { return new GripHandle(orientation(), this); }
+};
+
 // HH:MM:SS:FF, the frame within its second, as editing software shows it.
 QString timecode(qint64 milliseconds, int frameRate)
 {
@@ -221,13 +277,22 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // a large frame, auditing tracks wants a large table. A splitter lets the
     // reviewer decide, and stops the transport bar being squeezed out when
     // the window is short.
-    auto* split = new QSplitter(Qt::Vertical, this);
-    split->setChildrenCollapsible(false);
+    // Top: the picture and the fish activity under it. Bottom: Log and
+    // Events. The handle sits right on the log's top edge, where a reviewer
+    // reaches for it.
+    auto* split = new GripSplitter(Qt::Vertical, this);
+    split->setObjectName(QStringLiteral("reviewSplit"));
     split->setHandleWidth(10);
     column->addWidget(split);
 
+    auto* upper = new QWidget(split);
+    upper->setProperty("role", "bare");
+    auto* upperColumn = new QVBoxLayout(upper);
+    upperColumn->setContentsMargins(0, 0, 0, 0);
+    upperColumn->setSpacing(8);
+
     // ---- Canvas ------------------------------------------------------
-    auto* canvasCard = card(split);
+    auto* canvasCard = card(upper);
     auto* canvasBody = new QVBoxLayout(canvasCard);
     canvasBody->setContentsMargins(1, 1, 1, 1);
     canvasBody->setSpacing(0);
@@ -239,15 +304,10 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // never claims less than its parts need, so a short window cannot
     // squeeze the frame under the transport.
     canvasCard->setMinimumHeight(238);
-    split->addWidget(canvasCard);
-
-    auto* lower = new QWidget(split);
-    auto* lowerColumn = new QVBoxLayout(lower);
-    lowerColumn->setContentsMargins(0, 0, 0, 0);
-    lowerColumn->setSpacing(8);
+    upperColumn->addWidget(canvasCard, 1);
 
     // ---- Sequence timeline -------------------------------------------
-    auto* timelineCard = card(lower);
+    auto* timelineCard = card(upper);
     auto* timelineBody = new QVBoxLayout(timelineCard);
     timelineBody->setContentsMargins(14, 10, 14, 8);
     timelineBody->setSpacing(4);
@@ -263,10 +323,11 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     m_filmstrip = new Filmstrip(timelineCard);
     connect(m_filmstrip, &Filmstrip::frameRequested, this, &ReviewPanel::frameRequested);
     timelineBody->addWidget(m_filmstrip);
-    lowerColumn->addWidget(timelineCard);
+    upperColumn->addWidget(timelineCard);
+    split->addWidget(upper);
 
-    // ---- Tables ------------------------------------------------------
-    auto* tabCard = card(lower);
+    // ---- Log and events ----------------------------------------------
+    auto* tabCard = card(split);
     auto* tabBody = new QVBoxLayout(tabCard);
     tabBody->setContentsMargins(10, 6, 10, 10);
     // The strip is built from parts rather than a QTabWidget: a tab widget
@@ -314,15 +375,19 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     });
     tabBody->addWidget(strip);
     tabBody->addWidget(m_tabPages, 1);
-    tabCard->setMinimumHeight(154);
-    lowerColumn->addWidget(tabCard, 1);
+    // Room for the tabs and a few lines; less than that and it collapses.
+    tabCard->setMinimumHeight(96);
+    split->addWidget(tabCard);
 
-    split->addWidget(lower);
-    // The frame is what a reviewer looks at: give it the space, and the
-    // charts below their minimum; the handle lets them have more.
-    split->setStretchFactor(0, 4);
-    split->setStretchFactor(1, 1);
-    split->setSizes({1000, 1});
+    // The picture is never hidden; the log can be, by dragging it down.
+    split->setCollapsible(0, false);
+    split->setCollapsible(1, true);
+    // A taller window grows the picture, not the log.
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 0);
+    // The log starts readable (about ten lines), not squeezed to its minimum,
+    // so the handle can move both ways from the start.
+    split->setSizes({1000, 200});
 }
 
 QWidget* ReviewPanel::buildHeader()
@@ -648,7 +713,7 @@ QWidget* ReviewPanel::buildTransport()
     m_clock->setToolTip(QStringLiteral("Hours:minutes:seconds:frames"));
     m_clock->setEnabled(false);
     readoutColumn->addWidget(m_clock);
-    m_frameCounter = new QLabel(QStringLiteral("Frame â€“"), readout);
+    m_frameCounter = new QLabel(QStringLiteral("Frame –"), readout);
     m_frameCounter->setProperty("role", "frameCounter");
     readoutColumn->addWidget(m_frameCounter);
     row->addWidget(readout, 0, Qt::AlignVCenter);
@@ -725,7 +790,7 @@ void ReviewPanel::showClock(int frame, int total, qint64 timeMs)
     if (total <= 0) {
         m_clock->setText(QStringLiteral("00:00:00:00"));
         m_clockTotal->setText(QStringLiteral("00:00:00"));
-        m_frameCounter->setText(QStringLiteral("Frame â€“"));
+        m_frameCounter->setText(QStringLiteral("Frame –"));
         return;
     }
     const QLocale locale = QLocale::system();
