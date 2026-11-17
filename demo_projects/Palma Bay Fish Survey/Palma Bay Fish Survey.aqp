@@ -1,6 +1,7 @@
 {
     "createdAtMs": 1794519573983,
     "database": "annotations/observations.json",
+    "detector": "rtdetr_l_converged",
     "media": [
         "media/videos/video_019.mp4",
         "media/videos/video_045.mp4",
