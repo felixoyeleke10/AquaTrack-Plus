@@ -3,6 +3,7 @@
 #include "data/media/MediaSource.h"
 #include "domain/ScientificTypes.h"
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -31,6 +32,16 @@ struct AnalysisRequest {
     int minimumHits = 3;
     int maximumMissed = 30;
     QString output;        // results JSON to write
+};
+
+// What a line of the run's console output is, for colouring it.
+enum class OutputKind {
+    Command,  // the command line that was started
+    Info,     // the app's own account: loading, stages, progress
+    Output,   // what Python and its libraries print
+    Warning,
+    Error,
+    Success,
 };
 
 struct AnalysisResult {
@@ -64,6 +75,10 @@ public:
 
 signals:
     void progress(int done, int total, QString text);
+    // Every line worth showing in a console: the command, what Python
+    // prints on either stream, and the run's milestones. `kind` is an
+    // OutputKind.
+    void output(QString text, int kind);
     void finished(QString resultsPath);
     void failed(QString error);
 
@@ -78,6 +93,9 @@ private:
     QString m_reportedError;
     QString m_stage;
     bool m_cancelled = false;
+    int m_loggedTenth = -1;  // progress is logged every 10 %, not every frame
+    QElapsedTimer m_clock;
+    void say(const QString& text, OutputKind kind) { emit output(text, int(kind)); }
 };
 
 }  // namespace aquatrack::application

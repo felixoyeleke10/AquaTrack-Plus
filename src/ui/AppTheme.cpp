@@ -266,6 +266,14 @@ QCheckBox::indicator {
 }
 QCheckBox::indicator:checked { background: @accent; border-color: @accent; }
 
+/* ---- Review log -------------------------------------------------------- */
+QPlainTextEdit#activityLog {
+    background: @sunken; border: 1px solid @lineSoft; border-radius: 8px;
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 12px;
+    color: @textSecondary; padding: 6px 8px;
+    selection-background-color: @accentSunken; selection-color: @text;
+}
+
 /* ---- Settings window --------------------------------------------------- */
 #settingsWindow { background: @canvas; }
 #settingsRail { background: @chrome; border: none; border-right: 1px solid @line; }
@@ -359,6 +367,15 @@ QTabBar::tab {
 }
 QTabBar::tab:hover { color: @textSecondary; }
 QTabBar::tab:selected { color: @text; border-bottom: 2px solid @accent; }
+/* No baseline under the tabs: the style draws it light, a stray white rule. */
+QTabBar { qproperty-drawBase: 0; background: transparent; }
+/* Small word buttons that sit in a strip (Copy, Clear). */
+QPushButton[role="ghost"] {
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    padding: 3px 9px; color: @textDim; font-size: 12px;
+}
+QPushButton[role="ghost"]:hover { color: @text; background: @surface; border-color: @lineSoft; }
+QPushButton[role="ghost"]:pressed { background: @surfaceRaised; }
 
 /* ---- Scrollbars ------------------------------------------------------ */
 QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }

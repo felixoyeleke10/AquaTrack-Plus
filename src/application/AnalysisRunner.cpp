@@ -11,6 +11,7 @@
 #include <QProcessEnvironment>
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -125,6 +126,8 @@ void AnalysisRunner::start(const AnalysisRequest& request)
     m_reportedError.clear();
     m_stage.clear();
     m_cancelled = false;
+    m_loggedTenth = -1;
+    m_clock.start();
     m_output = request.output;
     QFile::remove(m_output);
 
@@ -167,7 +170,19 @@ void AnalysisRunner::start(const AnalysisRequest& request)
                                .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
         for (const auto& line : lines) {
             const QString trimmed = line.trimmed();
-            if (!trimmed.isEmpty() && !trimmed.startsWith(QLatin1String("WARNING")))
+            if (trimmed.isEmpty())
+                continue;
+            // Libraries log ordinary chatter to stderr too; only what reads
+            // as a problem is coloured as one.
+            const bool warning = trimmed.startsWith(QLatin1String("WARNING")) ||
+                                 trimmed.contains(QLatin1String("Warning"));
+            const bool error = !warning && (trimmed.startsWith(QLatin1String("Traceback")) ||
+                                            trimmed.contains(QLatin1String("Error")) ||
+                                            trimmed.contains(QLatin1String("Exception")));
+            say(line.trimmed(), warning ? OutputKind::Warning
+                                : error ? OutputKind::Error
+                                        : OutputKind::Output);
+            if (!trimmed.startsWith(QLatin1String("WARNING")))
                 m_stderrTail << trimmed;
         }
         while (m_stderrTail.size() > 12)
@@ -179,6 +194,12 @@ void AnalysisRunner::start(const AnalysisRequest& request)
             emit failed(QStringLiteral("Could not start Python: %1").arg(m_process->errorString()));
     });
     emit progress(0, 0, QStringLiteral("Starting Python..."));
+    // The exact command, so a run can be repeated by hand in a terminal.
+    QStringList shown{request.python};
+    for (const QString& argument : arguments)
+        shown << (argument.contains(QLatin1Char(' ')) ? QLatin1Char('"') + argument + QLatin1Char('"')
+                                                      : argument);
+    say(shown.join(QLatin1Char(' ')), OutputKind::Command);
     m_process->start(request.python, arguments, QIODevice::ReadOnly);
 }
 
@@ -197,8 +218,13 @@ void AnalysisRunner::readOutput()
     while ((newline = m_buffer.indexOf('\n')) >= 0) {
         const QByteArray line = m_buffer.left(newline).trimmed();
         m_buffer.remove(0, newline + 1);
-        if (!line.startsWith('{'))
-            continue;  // library chatter
+        if (!line.startsWith('{')) {
+            // Library chatter: not for the progress bar, but the console
+            // shows it.
+            if (!line.isEmpty())
+                say(QString::fromUtf8(line), OutputKind::Output);
+            continue;
+        }
         const auto object = QJsonDocument::fromJson(line).object();
         const QString event = object.value(QStringLiteral("event")).toString();
         if (event == QLatin1String("start")) {
@@ -206,9 +232,11 @@ void AnalysisRunner::readOutput()
                           .arg(object.value(QStringLiteral("model")).toString(),
                                object.value(QStringLiteral("device")).toString().toUpper());
             emit progress(0, 0, m_stage);
+            say(m_stage, OutputKind::Info);
         } else if (event == QLatin1String("stage")) {
             m_stage = object.value(QStringLiteral("text")).toString();
             emit progress(0, 0, m_stage + QStringLiteral("..."));
+            say(m_stage, OutputKind::Info);
         } else if (event == QLatin1String("progress")) {
             const int done = object.value(QStringLiteral("done")).toInt();
             const int total = object.value(QStringLiteral("total")).toInt();
@@ -220,8 +248,14 @@ void AnalysisRunner::readOutput()
                             .arg(fps, 0, 'f', 0)
                             .arg(int(std::ceil((total - done) / fps)));
             emit progress(done, total, text);
+            const int tenth = total > 0 ? std::clamp(done * 10 / total, 0, 10) : -1;
+            if (tenth > m_loggedTenth) {
+                m_loggedTenth = tenth;
+                say(QStringLiteral("%1 %  ·  %2").arg(tenth * 10).arg(text), OutputKind::Info);
+            }
         } else if (event == QLatin1String("error")) {
             m_reportedError = object.value(QStringLiteral("message")).toString();
+            say(m_reportedError, OutputKind::Error);
         }
     }
 }
@@ -229,14 +263,23 @@ void AnalysisRunner::readOutput()
 void AnalysisRunner::processFinished(int exitCode, QProcess::ExitStatus status)
 {
     readOutput();
+    const QString took = QStringLiteral("%1 s").arg(m_clock.elapsed() / 1000.0, 0, 'f', 1);
     if (m_cancelled) {
+        say(QStringLiteral("Cancelled after %1").arg(took), OutputKind::Warning);
         emit failed(QStringLiteral("Cancelled"));
         return;
     }
     if (status == QProcess::NormalExit && exitCode == 0 && QFileInfo::exists(m_output)) {
+        say(QStringLiteral("Finished in %1  ·  results in %2")
+                .arg(took, QDir::toNativeSeparators(m_output)),
+            OutputKind::Success);
         emit finished(m_output);
         return;
     }
+    say(status == QProcess::CrashExit
+            ? QStringLiteral("Python crashed after %1").arg(took)
+            : QStringLiteral("Python exited with code %1 after %2").arg(exitCode).arg(took),
+        OutputKind::Error);
     QString message = m_reportedError;
     if (message.isEmpty() && !m_stderrTail.isEmpty())
         message = m_stderrTail.last();

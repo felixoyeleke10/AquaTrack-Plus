@@ -14,14 +14,10 @@ class QProgressBar;
 class QPushButton;
 class QSlider;
 class QTableWidget;
-class QTabWidget;
+class QStackedWidget;
+class QTabBar;
+class LogView;
 class SequenceView;
-
-namespace aquatrack::ui {
-class BarList;
-class DonutChart;
-class LineChart;
-}
 
 // Centre column: the frame under review, transport, the sequence timeline,
 // and the summary charts for whatever is currently loaded.
@@ -41,6 +37,7 @@ public:
     [[nodiscard]] aquatrack::ui::TrackLanes* timeline() const { return m_timeline; }
     [[nodiscard]] ActivityPanel* activity() const { return m_activity; }
     [[nodiscard]] aquatrack::ui::Filmstrip* filmstrip() const { return m_filmstrip; }
+    [[nodiscard]] LogView* activityLog() const { return m_log; }
 
     void configureSequence(int frames, int frameRate, qint64 durationMs = -1);
     // `sourceSize`: pixel space of `annotations` (see SequenceView::setFrame).
@@ -61,10 +58,6 @@ public:
     void setAnalysisRunning(bool running);
     void setAnalysisProgress(int done, int total, const QString& text);
     void setPlaying(bool playing);
-    void setAnalytics(const std::vector<aquatrack::analytics::TimeBin>& bins,
-                      const aquatrack::analytics::SurveySummary& summary,
-                      const std::vector<aquatrack::analytics::TrackSpan>& spans, int frameRate);
-    void setTracksTable(const std::vector<aquatrack::analytics::TrackSpan>& spans);
     void setEventsTable(const std::vector<aquatrack::analytics::SurveyEvent>& events);
     void clearAnalytics();
 
@@ -91,7 +84,6 @@ private:
     void setCompactHeader(bool compact);
     QWidget* buildHeader();
     QWidget* buildTransport();
-    QWidget* buildAnalyticsRow(QWidget* parent);
 
     SequenceView* m_view = nullptr;
     ActivityPanel* m_activity = nullptr;
@@ -125,15 +117,10 @@ private:
     QLabel* m_frameCounter = nullptr;
     void showClock(int frame, int total, qint64 timeMs);
 
-    QTabWidget* m_tabs = nullptr;
-    QTableWidget* m_trackTable = nullptr;
+    QTabBar* m_tabs = nullptr;            // Log | Events
+    QStackedWidget* m_tabPages = nullptr;  // their pages
+    LogView* m_log = nullptr;
     QTableWidget* m_eventTable = nullptr;
-
-    aquatrack::ui::LineChart* m_countChart = nullptr;
-    aquatrack::ui::DonutChart* m_speciesChart = nullptr;
-    aquatrack::ui::LineChart* m_activityChart = nullptr;
-    aquatrack::ui::BarList* m_topTracks = nullptr;
-    QLabel* m_countTotal = nullptr;
 
     int m_frameRate = 15;
     int m_totalFrames = 0;

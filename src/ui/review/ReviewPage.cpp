@@ -8,6 +8,7 @@
 #include "data/media/VideoProbe.h"
 #include "data/observations/JsonObservationRepository.h"
 #include "ui/AppTheme.h"
+#include "ui/review/center/LogView.h"
 #include "ui/review/center/ReviewPanel.h"
 #include "ui/review/center/video/SequenceView.h"
 #include "ui/review/left/SurveyPanel.h"
@@ -238,6 +239,11 @@ ReviewPage::ReviewPage(QWidget* parent)
             });
     connect(m_analysis, &aquatrack::application::AnalysisRunner::finished, this,
             &ReviewPage::analysisFinished);
+    // Everything the run prints goes to the log.
+    connect(m_analysis, &aquatrack::application::AnalysisRunner::output, this,
+            [this](const QString& text, int kind) {
+                m_reviewPanel->activityLog()->append(text, LogView::Kind(kind));
+            });
     connect(m_analysis, &aquatrack::application::AnalysisRunner::failed, this,
             [this](const QString& error) {
                 m_reviewPanel->setAnalysisRunning(false);
@@ -860,7 +866,6 @@ void ReviewPage::rebuildAnalytics()
     const auto events = analytics::notableEvents(all, binWidth);
     m_idSwitches = analytics::idSwitchCandidates(all);
 
-    m_reviewPanel->setAnalytics(bins, summary, spans, m_frameRate);
 
     // ---- Fish activity: per second, distinct tracks and detections ------
     {
@@ -880,7 +885,6 @@ void ReviewPage::rebuildAnalytics()
         }
         m_reviewPanel->activity()->setActivity(tracks, detections, int(summary.uniqueLocalTracks));
     }
-    m_reviewPanel->setTracksTable(spans);
     m_reviewPanel->setEventsTable(events);
 
     // ---- Track lanes -------------------------------------------------
@@ -1224,8 +1228,26 @@ bool ReviewPage::applyDetections(const media::MediaSource& media,
     }
     if (note.isEmpty())
         note = QStringLiteral("Loaded %1").arg(what);
+    m_reviewPanel->activityLog()->append(note, LogView::Kind::Success);
     emit statusMessage(note);
     return true;
+}
+
+void ReviewPage::logStatus(const QString& message)
+{
+    if (message.trimmed().isEmpty())
+        return;
+    // Status lines are the app's own account; failures read as problems.
+    const QString lower = message.toLower();
+    const bool problem = lower.contains(QLatin1String("could not")) ||
+                         lower.contains(QLatin1String("failed")) ||
+                         lower.contains(QLatin1String("error"));
+    const bool caution = lower.contains(QLatin1String("warning")) ||
+                         lower.contains(QLatin1String("missing")) ||
+                         lower.contains(QLatin1String("not found"));
+    m_reviewPanel->activityLog()->append(message, problem   ? LogView::Kind::Error
+                                                  : caution ? LogView::Kind::Warning
+                                                            : LogView::Kind::Info);
 }
 
 void ReviewPage::carryDetector(const std::string& from, const std::string& to)

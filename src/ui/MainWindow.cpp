@@ -129,6 +129,9 @@ MainWindow::MainWindow(QWidget *parent)
   // window ends in one strip rather than a page bar over a status bar.
   connect(statusBar(), &QStatusBar::messageChanged, m_dock,
           &NavigationDock::setStatusMessage);
+  // Every status message also lands in the Review page's log, so what the
+  // app did stays readable after the page bar has moved on.
+  connect(statusBar(), &QStatusBar::messageChanged, m_review, &ReviewPage::logStatus);
   statusBar()->hide();
   statusBar()->showMessage(QStringLiteral("Ready | Native C++ runtime"));
 

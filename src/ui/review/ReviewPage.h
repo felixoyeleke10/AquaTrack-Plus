@@ -87,6 +87,8 @@ public:
     void startAnalysis(aquatrack::application::AnalysisRequest request);
     [[nodiscard]] bool isAnalysisRunning() const;
     void cancelAnalysis();
+    // Adds an app status message to the Review page's log.
+    void logStatus(const QString& message);
     // The detectors Detect & track can use, and the one it will use.
     // `forProject`: the choice is remembered by the open project.
     void setDetectorChoices(const QVector<ReviewPanel::DetectorOption>& options,

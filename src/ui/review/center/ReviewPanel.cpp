@@ -1,14 +1,13 @@
 #include "ui/review/center/ReviewPanel.h"
 
 #include "ui/AppTheme.h"
-#include "ui/common/Charts.h"
 #include "ui/common/Glyphs.h"
 #include "ui/common/Widgets.h"
+#include "ui/review/center/LogView.h"
 #include "ui/review/center/video/SequenceView.h"
 
 #include <QActionGroup>
 #include <QFrame>
-#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -23,7 +22,8 @@
 #include <QSlider>
 #include <QSplitter>
 #include <QStyle>
-#include <QTabWidget>
+#include <QTabBar>
+#include <QStackedWidget>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -178,29 +178,6 @@ QString shortClock(qint64 milliseconds)
 }
 
 // One analytics card: a titled panel wrapping a chart.
-QFrame* chartCard(const QString& title, QWidget* body, QWidget* parent, QLabel** footer = nullptr)
-{
-    auto* frame = card(parent);
-    auto* column = new QVBoxLayout(frame);
-    column->setContentsMargins(12, 10, 12, 10);
-    column->setSpacing(7);
-
-    auto* head = new QHBoxLayout;
-    head->setContentsMargins(0, 0, 0, 0);
-    head->addWidget(sectionLabel(title, frame));
-    head->addStretch();
-    if (footer) {
-        *footer = typedLabel(QString(), "dim", frame);
-        (*footer)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        head->addWidget(*footer);
-    }
-    column->addLayout(head);
-
-    body->setParent(frame);
-    column->addWidget(body, 1);
-    return frame;
-}
-
 // Text columns read from the left, figures line up on the right; headers
 // follow their column. `numeric` lists the right-aligned columns.
 QTableWidget* buildTable(const QStringList& headers, const QList<int>& numeric, QWidget* parent)
@@ -228,13 +205,6 @@ QTableWidgetItem* textCell(const QString& text)
 {
     auto* item = new QTableWidgetItem(text);
     item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    return item;
-}
-
-QTableWidgetItem* numberCell(const QString& text)
-{
-    auto* item = new QTableWidgetItem(text);
-    item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     return item;
 }
 
@@ -299,27 +269,35 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     auto* tabCard = card(lower);
     auto* tabBody = new QVBoxLayout(tabCard);
     tabBody->setContentsMargins(10, 6, 10, 10);
-    m_tabs = new QTabWidget(tabCard);
+    // The strip is built from parts rather than a QTabWidget: a tab widget
+    // with a corner widget draws its own light rule across the corner,
+    // which no style sheet reaches.
+    auto* strip = new QWidget(tabCard);
+    strip->setProperty("role", "bare");
+    auto* stripRow = new QHBoxLayout(strip);
+    stripRow->setContentsMargins(0, 0, 0, 0);
+    stripRow->setSpacing(0);
+    m_tabs = new QTabBar(strip);
+    m_tabs->setObjectName(QStringLiteral("reviewLowerTabs"));
+    m_tabs->setDrawBase(false);
+    m_tabs->setExpanding(false);
     m_tabs->setDocumentMode(true);
-    m_trackTable = buildTable({QStringLiteral("Track"), QStringLiteral("Species"),
-                               QStringLiteral("First"), QStringLiteral("Last"),
-                               QStringLiteral("Detections"), QStringLiteral("Duration")},
-                              {2, 3, 4, 5}, m_tabs);
-    m_trackTable->setObjectName(QStringLiteral("trackTable"));
-    m_trackTable->horizontalHeaderItem(2)->setToolTip(QStringLiteral("First frame the track is seen"));
-    m_trackTable->horizontalHeaderItem(3)->setToolTip(QStringLiteral("Last frame the track is seen"));
-    m_trackTable->horizontalHeaderItem(4)->setToolTip(QStringLiteral("Boxes recorded for the track"));
-    // The figures fit their headings and values, so none is ever cut short;
-    // Species takes the spare width, keeping the figures together on the right.
-    for (int column : {0, 2, 3, 4, 5})
-        m_trackTable->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
-    m_trackTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_trackTable->setToolTip(QStringLiteral("Click a track to go to its first frame"));
-    connect(m_trackTable, &QTableWidget::cellClicked, this, [this](int row, int) {
-        if (auto* item = m_trackTable->item(row, 2))
-            emit frameRequested(item->data(Qt::UserRole).toInt());
-    });
-    m_eventTable = buildTable({QStringLiteral("Time"), QStringLiteral("Event")}, {}, m_tabs);
+    stripRow->addWidget(m_tabs, 0, Qt::AlignBottom);
+    stripRow->addStretch(1);
+    m_tabPages = new QStackedWidget(tabCard);
+    m_tabPages->setProperty("role", "bare");
+
+    // The log first: what the app is doing, Detect & track runs in full.
+    // The track list and summary charts live in the inspector and on the
+    // Analytics page, so they are not repeated here.
+    m_log = new LogView(m_tabPages);
+    m_tabs->addTab(QStringLiteral("Log"));
+    m_tabPages->addWidget(m_log);
+    stripRow->addWidget(m_log->tools(), 0, Qt::AlignVCenter);
+    // A problem brings the log forward, wherever the reviewer was.
+    connect(m_log, &LogView::errorLogged, this, [this] { m_tabs->setCurrentIndex(0); });
+
+    m_eventTable = buildTable({QStringLiteral("Time"), QStringLiteral("Event")}, {}, m_tabPages);
     m_eventTable->setObjectName(QStringLiteral("eventTable"));
     m_eventTable->setToolTip(QStringLiteral("Click an event to go to it"));
     m_eventTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -327,12 +305,15 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
         if (auto* item = m_eventTable->item(row, 0))
             emit timestampRequested(item->data(Qt::UserRole).toLongLong());
     });
-    m_tabs->addTab(m_trackTable, QStringLiteral("Tracks"));
-    m_tabs->addTab(m_eventTable, QStringLiteral("Events"));
-    // The summary charts: useful, but not while scrubbing, so they wait in
-    // a tab instead of squeezing the tables.
-    m_tabs->addTab(buildAnalyticsRow(m_tabs), QStringLiteral("Charts"));
-    tabBody->addWidget(m_tabs);
+    m_tabs->addTab(QStringLiteral("Events"));
+    m_tabPages->addWidget(m_eventTable);
+    connect(m_tabs, &QTabBar::currentChanged, this, [this](int index) {
+        m_tabPages->setCurrentIndex(index);
+        // Copy and Clear belong to the log only.
+        m_log->tools()->setVisible(index == 0);
+    });
+    tabBody->addWidget(strip);
+    tabBody->addWidget(m_tabPages, 1);
     tabCard->setMinimumHeight(154);
     lowerColumn->addWidget(tabCard, 1);
 
@@ -667,7 +648,7 @@ QWidget* ReviewPanel::buildTransport()
     m_clock->setToolTip(QStringLiteral("Hours:minutes:seconds:frames"));
     m_clock->setEnabled(false);
     readoutColumn->addWidget(m_clock);
-    m_frameCounter = new QLabel(QStringLiteral("Frame –"), readout);
+    m_frameCounter = new QLabel(QStringLiteral("Frame â€“"), readout);
     m_frameCounter->setProperty("role", "frameCounter");
     readoutColumn->addWidget(m_frameCounter);
     row->addWidget(readout, 0, Qt::AlignVCenter);
@@ -701,40 +682,6 @@ QWidget* ReviewPanel::buildTransport()
     connect(fullscreen, &QPushButton::clicked, this, &ReviewPanel::fullscreenRequested);
     row->addWidget(fullscreen);
     return bar;
-}
-
-QWidget* ReviewPanel::buildAnalyticsRow(QWidget* parent)
-{
-    auto* row = new QWidget(parent);
-    auto* grid = new QGridLayout(row);
-    grid->setContentsMargins(0, 0, 0, 0);
-    grid->setSpacing(10);
-
-    m_countChart = new LineChart(row);
-    m_countChart->setEmptyText(QStringLiteral("Open a sequence"));
-    m_countChart->setPeakCallout(true);
-    m_countChart->setAxisCaptions(QStringLiteral("Tracks"));
-    grid->addWidget(chartCard(QStringLiteral("Count over time"), m_countChart, row, &m_countTotal),
-                    0, 0);
-
-    m_speciesChart = new DonutChart(row);
-    grid->addWidget(chartCard(QStringLiteral("Species breakdown"), m_speciesChart, row), 0, 1);
-
-    m_activityChart = new LineChart(row);
-    m_activityChart->setEmptyText(QStringLiteral("Open a sequence"));
-    m_activityChart->setLegendVisible(true);
-    grid->addWidget(chartCard(QStringLiteral("Observations vs tracks"), m_activityChart, row), 0, 2);
-
-    m_topTracks = new BarList(row);
-    grid->addWidget(chartCard(QStringLiteral("Longest tracks"), m_topTracks, row), 0, 3);
-
-    for (int index = 0; index < 4; ++index)
-        grid->setColumnStretch(index, 1);
-    grid->setContentsMargins(2, 10, 2, 2);
-    row->setProperty("role", "bare");
-    // Fits the tab page under the minimum tab card, so no chart is clipped.
-    row->setMinimumHeight(106);
-    return row;
 }
 
 void ReviewPanel::configureSequence(int frames, int frameRate, qint64 durationMs)
@@ -778,7 +725,7 @@ void ReviewPanel::showClock(int frame, int total, qint64 timeMs)
     if (total <= 0) {
         m_clock->setText(QStringLiteral("00:00:00:00"));
         m_clockTotal->setText(QStringLiteral("00:00:00"));
-        m_frameCounter->setText(QStringLiteral("Frame –"));
+        m_frameCounter->setText(QStringLiteral("Frame â€“"));
         return;
     }
     const QLocale locale = QLocale::system();
@@ -799,93 +746,6 @@ void ReviewPanel::setPlaying(bool playing)
     m_play->setProperty("playing", playing);
     m_play->style()->unpolish(m_play);
     m_play->style()->polish(m_play);
-}
-
-void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,
-                               const analytics::SurveySummary& summary,
-                               const std::vector<analytics::TrackSpan>& spans, int frameRate)
-{
-    m_frameRate = std::max(1, frameRate);
-
-    // Count over time.
-    ChartSeries tracks;
-    tracks.name = QStringLiteral("Tracks");
-    tracks.color = palette::Accent;
-    tracks.filled = true;
-    ChartSeries observations;
-    observations.name = QStringLiteral("Observations");
-    observations.color = palette::Secondary;
-    for (const auto& bin : bins) {
-        tracks.values.push_back(double(bin.uniqueTracks));
-        observations.values.push_back(double(bin.observations));
-    }
-    m_countChart->setSeries({tracks});
-    if (!bins.empty()) {
-        m_countChart->setAxisLabels({shortClock(bins.front().startMs), shortClock(bins.back().endMs)});
-        m_countTotal->setText(QStringLiteral("%1 bins").arg(bins.size()));
-    }
-
-    ChartSeries tracksCopy = tracks;
-    tracksCopy.filled = false;
-    m_activityChart->setSeries({observations, tracksCopy});
-    if (!bins.empty())
-        m_activityChart->setAxisLabels(
-            {shortClock(bins.front().startMs), shortClock(bins.back().endMs)});
-
-    // Species breakdown.
-    QVector<DonutSlice> slices;
-    for (const auto& [name, count] : summary.observationsByClass) {
-        DonutSlice slice;
-        slice.name = QString::fromStdString(name);
-        slice.value = double(count);
-        slices.push_back(slice);
-    }
-    std::sort(slices.begin(), slices.end(),
-              [](const DonutSlice& left, const DonutSlice& right) { return left.value > right.value; });
-    // Colour by species, not rank, so a slice matches the box colour and the
-    // "Species in frame" legend on the canvas.
-    for (int index = 0; index < slices.size(); ++index)
-        slices[index].color = speciesColorForName(slices[index].name, index);
-    m_speciesChart->setSlices(slices);
-    m_speciesChart->setCenterCaption(QString::number(summary.totalObservations),
-                                     QStringLiteral("total"));
-
-    // Longest tracks.
-    QVector<BarRow> rows;
-    for (const auto& span : spans) {
-        if (rows.size() >= 5)
-            break;
-        BarRow row;
-        row.badge = QStringLiteral("ID %1").arg(span.trackId);
-        row.color = trackColor(int(span.trackId));
-        row.value = double(span.durationMs());
-        row.valueText = shortClock(span.durationMs());
-        rows.push_back(row);
-    }
-    m_topTracks->setRows(rows);
-}
-
-void ReviewPanel::setTracksTable(const std::vector<analytics::TrackSpan>& spans)
-{
-    const QLocale locale = QLocale::system();
-    m_trackTable->setRowCount(int(spans.size()));
-    for (int row = 0; row < int(spans.size()); ++row) {
-        const auto& span = spans.at(std::size_t(row));
-        auto* badge = textCell(QStringLiteral("ID %1").arg(span.trackId));
-        badge->setForeground(trackColor(int(span.trackId)));
-        m_trackTable->setItem(row, 0, badge);
-        m_trackTable->setItem(row, 1, textCell(QString::fromStdString(span.className)));
-        auto* first = numberCell(locale.toString(qlonglong(span.firstFrame)));
-        first->setData(Qt::UserRole, int(span.firstFrame));
-        m_trackTable->setItem(row, 2, first);
-        m_trackTable->setItem(row, 3, numberCell(locale.toString(qlonglong(span.lastFrame))));
-        m_trackTable->setItem(row, 4, numberCell(locale.toString(qulonglong(span.observations))));
-        m_trackTable->setItem(row, 5, numberCell(shortClock(span.durationMs())));
-    }
-    // A new list starts at its top (longest track first), wherever the
-    // previous one had been scrolled to.
-    m_trackTable->scrollToTop();
-    m_tabs->setTabText(0, QStringLiteral("Tracks (%1)").arg(locale.toString(qulonglong(spans.size()))));
 }
 
 void ReviewPanel::setEventsTable(const std::vector<analytics::SurveyEvent>& events)
@@ -911,19 +771,13 @@ void ReviewPanel::setEventsTable(const std::vector<analytics::SurveyEvent>& even
         }
         m_eventTable->setItem(row, 1, description);
     }
-    m_tabs->setTabText(1, QStringLiteral("Events (%1)").arg(events.size()));
+    m_tabs->setTabText(1, events.empty() ? QStringLiteral("Events")
+                                         : QStringLiteral("Events (%1)").arg(events.size()));
 }
 
 void ReviewPanel::clearAnalytics()
 {
-    m_countChart->setSeries({});
-    m_activityChart->setSeries({});
-    m_speciesChart->setSlices({});
-    m_topTracks->setRows({});
-    m_trackTable->setRowCount(0);
     m_eventTable->setRowCount(0);
-    m_countTotal->clear();
     m_activity->setActivity({}, {}, 0);
-    m_tabs->setTabText(0, QStringLiteral("Tracks"));
     m_tabs->setTabText(1, QStringLiteral("Events"));
 }

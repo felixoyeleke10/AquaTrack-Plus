@@ -44,6 +44,8 @@ add_library(aquatrack-ui
     src/ui/review/left/SurveyPanel.cpp
     src/ui/review/left/SurveyPanel.h
     src/ui/review/center/ActivityPanel.cpp
+    src/ui/review/center/LogView.cpp
+    src/ui/review/center/LogView.h
     src/ui/review/center/ActivityPanel.h
     src/ui/review/center/ReviewPanel.cpp
     src/ui/review/center/ReviewPanel.h
