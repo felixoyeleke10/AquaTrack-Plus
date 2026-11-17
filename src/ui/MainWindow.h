@@ -22,6 +22,7 @@ class QStackedWidget;
 class VideosPage;
 class ModelsPage;
 class SettingsPage;
+class SettingsWindow;
 class ExportPage;
 class ReviewPage;
 class AnalyticsPage;
@@ -82,6 +83,8 @@ private:
   // Resolves the active detector and Python, then runs detection + tracking
   // over the media open in Review.
   void runAnalysis();
+  // Shows the settings window with the current settings (or raises it).
+  void openSettings();
   // Detectors Detect & track can run, and the one it will: the open
   // project's choice when it is still usable, else the app's active one.
   [[nodiscard]] QVector<const aquatrack::data::ModelEntry *> usableDetectors() const;
@@ -135,7 +138,8 @@ private:
   AnalyticsPage *m_analytics = nullptr;
   DatasetsPage *m_datasets = nullptr;
   ModelsPage *m_models = nullptr;
-  SettingsPage *m_settings = nullptr;
+  SettingsWindow *m_settingsWindow = nullptr;  // settings, in a window of their own
+  SettingsPage *m_settings = nullptr;          // its contents
   ExportPage *m_export = nullptr;
   // The open project's models folder, so switching projects can tell its
   // registry from one the reviewer opened elsewhere.

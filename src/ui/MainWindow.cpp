@@ -105,7 +105,8 @@ MainWindow::MainWindow(QWidget *parent)
   m_analytics = new AnalyticsPage(m_pages);
   m_datasets = new DatasetsPage(m_pages);
   m_models = new ModelsPage(m_pages);
-  m_settings = new SettingsPage(m_pages);
+  m_settingsWindow = new SettingsWindow(this);
+  m_settings = m_settingsWindow->page();
   m_export = new ExportPage(m_pages);
   m_pages->addWidget(m_dashboard);
   m_pages->addWidget(m_videos);
@@ -113,7 +114,9 @@ MainWindow::MainWindow(QWidget *parent)
   m_pages->addWidget(m_analytics);
   m_pages->addWidget(m_datasets);
   m_pages->addWidget(m_models);
-  m_pages->addWidget(m_settings);
+  // Settings open in their own window; this keeps the stack's indices
+  // equal to AppState::Page (index 6 is never shown).
+  m_pages->addWidget(new QWidget(m_pages));
   m_pages->addWidget(m_export);  // index 7: AppState::Page::Export
   layout->addWidget(m_header);
   layout->addWidget(m_pages, 1);
@@ -137,8 +140,10 @@ MainWindow::MainWindow(QWidget *parent)
       refreshExport();
     m_appState->setCurrentPage(static_cast<Page>(page));
   });
-  connect(m_header, &AppHeader::settingsRequested, this,
-          [this] { m_appState->setCurrentPage(Page::Settings); });
+  connect(m_header, &AppHeader::settingsRequested, this, &MainWindow::openSettings);
+  // The gear stays lit while the settings window is open.
+  connect(m_settingsWindow, &QDialog::finished, this,
+          [this] { m_header->setSettingsActive(false); });
   connect(m_header, &AppHeader::helpRequested, this, &MainWindow::showHelp);
   connect(m_header, &AppHeader::warningsRequested, this, &MainWindow::showWarnings);
   connect(m_header, &AppHeader::projectRequested, this,
@@ -566,7 +571,13 @@ MainWindow::MainWindow(QWidget *parent)
       m_settingsController,
       &aquatrack::application::SettingsController::settingsChanged, this,
       [this] {
-        m_settings->setSettings(m_settingsController->settings());
+        // An open window keeps the edits in progress; only the carried
+        // recent list follows.
+        if (m_settingsWindow->isVisible())
+          m_settings->setRecentProjects(
+              m_settingsController->settings().storage.recentProjects);
+        else
+          m_settings->setSettings(m_settingsController->settings());
         m_review->setFrameCacheSize(m_settingsController->settings().video.frameBufferSize);
         m_export->setIncludeUnverified(
             m_settingsController->settings().exportSettings.includeUnverified);
@@ -582,12 +593,33 @@ MainWindow::MainWindow(QWidget *parent)
     updated.detection.modelId = m_settingsController->settings().detection.modelId;
     updated.storage.recentProjects =
         m_settingsController->settings().storage.recentProjects;
-    if (!m_settingsController->save(updated, &error))
-      QMessageBox::warning(this, QStringLiteral("Could not save settings"),
-                           error);
-    else
-      statusBar()->showMessage(QStringLiteral("Settings saved"), 3000);
+    if (!m_settingsController->save(updated, &error)) {
+      QMessageBox::warning(m_settingsWindow->isVisible() ? static_cast<QWidget *>(m_settingsWindow)
+                                                         : this,
+                           QStringLiteral("Could not save settings"), error);
+      return;
+    }
+    statusBar()->showMessage(QStringLiteral("Settings saved"), 3000);
+    if (m_settingsWindow->isVisible())
+      m_settingsWindow->accept();
   });
+  connect(m_settings, &SettingsPage::clearRecentRequested, this, [this] {
+    const auto answer = QMessageBox::question(
+        m_settingsWindow, QStringLiteral("Clear recent projects?"),
+        QStringLiteral("Remove every project from the dashboard's recent list? The "
+                       "projects themselves are not deleted."),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes)
+      return;
+    auto updated = m_settingsController->settings();
+    updated.storage.recentProjects.clear();
+    QString error;
+    if (!m_settingsController->save(updated, &error))
+      QMessageBox::warning(m_settingsWindow, QStringLiteral("Could not save settings"), error);
+    else
+      statusBar()->showMessage(QStringLiteral("Recent projects cleared"), 3000);
+  });
+  m_settings->setSettingsFile(m_settingsController->path());
   QString settingsError;
   if (!m_settingsController->load(&settingsError))
     statusBar()->showMessage(
@@ -602,7 +634,6 @@ MainWindow::MainWindow(QWidget *parent)
               recordReviewSession();
             m_pages->setCurrentIndex(index);
             m_dock->setCurrentPage(index);
-            m_header->setSettingsActive(page == Page::Settings);
           });
   m_pages->setCurrentIndex(static_cast<int>(m_appState->currentPage()));
   m_dock->setCurrentPage(static_cast<int>(m_appState->currentPage()));
@@ -1255,6 +1286,22 @@ void MainWindow::runAnalysis() {
   }
   m_appState->setCurrentPage(Page::Review);
   m_review->startAnalysis(request);
+}
+
+void MainWindow::openSettings() {
+  if (!m_settingsWindow->isVisible()) {
+    // Opening starts from what is saved, not from an earlier cancelled edit.
+    m_settings->setSettings(m_settingsController->settings());
+    // Centred over the main window the first time; where it was left after.
+    if (!m_settingsWindow->property("placed").toBool()) {
+      m_settingsWindow->move(geometry().center() - m_settingsWindow->rect().center());
+      m_settingsWindow->setProperty("placed", true);
+    }
+  }
+  m_settingsWindow->show();
+  m_settingsWindow->raise();
+  m_settingsWindow->activateWindow();
+  m_header->setSettingsActive(true);
 }
 
 QVector<const aquatrack::data::ModelEntry *> MainWindow::usableDetectors() const {

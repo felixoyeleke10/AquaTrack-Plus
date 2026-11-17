@@ -251,6 +251,9 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
 }
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: #2a3446; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: @accent; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: #3a4252; background: @sunken; border-color: @lineSoft;
+}
 QComboBox::drop-down { border: none; width: 20px; }
 QComboBox QAbstractItemView {
     background: @surfaceRaised; border: 1px solid @line; border-radius: 8px;
@@ -262,6 +265,17 @@ QCheckBox::indicator {
     width: 15px; height: 15px; border: 1px solid @line; border-radius: 4px; background: @sunken;
 }
 QCheckBox::indicator:checked { background: @accent; border-color: @accent; }
+
+/* ---- Settings window --------------------------------------------------- */
+#settingsWindow { background: @canvas; }
+#settingsRail { background: @chrome; border: none; border-right: 1px solid @line; }
+#settingsFooter { background: @chrome; border: none; border-top: 1px solid @line; }
+QListWidget#settingsCategories { background: transparent; border: none; outline: none; }
+QListWidget#settingsCategories::item {
+    border: none; border-radius: 8px; padding: 0 10px; margin: 1px 0; color: @textSecondary;
+}
+QListWidget#settingsCategories::item:hover:!selected { background: @surface; color: @text; }
+QListWidget#settingsCategories::item:selected { background: @surfaceRaised; color: @text; }
 
 /* ---- Review transport ------------------------------------------------ */
 #transportBar { background: @chrome; border-top: 1px solid @line; }
