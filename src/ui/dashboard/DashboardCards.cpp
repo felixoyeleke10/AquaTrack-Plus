@@ -144,36 +144,60 @@ CardGrid::CardGrid(int minimumCardWidth, int textHeight, QWidget* parent)
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setMouseTracking(true);
     viewport()->setAttribute(Qt::WA_Hover);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    QSizePolicy policy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
     setStyleSheet(QStringLiteral("QListWidget { background: transparent; border: none; }"));
+}
+
+QSize CardGrid::cellFor(int width) const
+{
+    const int available = std::max(m_minimumWidth, width - 1);
+    const int columns = std::max(1, available / m_minimumWidth);
+    const int cellWidth = available / columns;
+    const int posterHeight = int((cellWidth - 2 * kGap) * 9.0 / 16.0);
+    return {cellWidth, posterHeight + m_textHeight + 2 * kGap};
+}
+
+int CardGrid::heightForWidth(int width) const
+{
+    const int frame = 2 * frameWidth();
+    const int inner = width - frame;
+    const QSize cell = cellFor(inner);
+    const int columns = std::max(1, std::max(m_minimumWidth, inner - 1) / m_minimumWidth);
+    const int rows = (count() + columns - 1) / columns;
+    return rows * cell.height() + frame;
 }
 
 void CardGrid::relayout()
 {
-    const int available = std::max(m_minimumWidth, viewport()->width() - 1);
-    const int columns = std::max(1, available / m_minimumWidth);
-    const int cellWidth = available / columns;
-    const int posterHeight = int((cellWidth - 2 * kGap) * 9.0 / 16.0);
-    const QSize cell(cellWidth, posterHeight + m_textHeight + 2 * kGap);
+    const QSize cell = cellFor(viewport()->width());
     if (gridSize() != cell)
         setGridSize(cell);
-    const int rows = (count() + columns - 1) / columns;
-    const int height = rows * cell.height();
-    if (height != this->height())
-        setFixedHeight(height);
     doItemsLayout();
+    // The item count may have changed the height the layout should give.
+    updateGeometry();
 }
 
 QSize CardGrid::sizeHint() const
 {
-    return {m_minimumWidth, height()};
+    return {m_minimumWidth, heightForWidth(std::max(width(), m_minimumWidth))};
+}
+
+QSize CardGrid::minimumSizeHint() const
+{
+    return {m_minimumWidth, 0};
 }
 
 void CardGrid::resizeEvent(QResizeEvent* event)
 {
     QListWidget::resizeEvent(event);
-    if (event->size().width() != event->oldSize().width())
-        relayout();
+    // Only the cells: the height already came from heightForWidth.
+    if (event->size().width() != event->oldSize().width()) {
+        const QSize cell = cellFor(viewport()->width());
+        if (gridSize() != cell)
+            setGridSize(cell);
+    }
 }
 
 // --------------------------------------------------- ProjectCardDelegate

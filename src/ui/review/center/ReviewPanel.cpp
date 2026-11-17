@@ -33,6 +33,69 @@
 using namespace aquatrack::ui;
 namespace analytics = aquatrack::analytics;
 
+// A one-line label that shortens its text with an ellipsis as it paints,
+// at whatever width the layout gives it. Its size hint is the whole text,
+// so a layout can let it hug short names and squeeze long ones, all in the
+// same pass (no fix-up after the resize, which made the header jump).
+class ElidedLabel final : public QLabel {
+public:
+    ElidedLabel(const QString& text, Qt::TextElideMode mode, QWidget* parent)
+        : QLabel(parent), m_mode(mode)
+    {
+        setFullText(text);
+    }
+
+    void setFullText(const QString& text)
+    {
+        m_full = text;
+        setText(text);  // text() stays the whole text; painting elides it
+        updateGeometry();
+        updateToolTip();
+        update();
+    }
+    [[nodiscard]] QString fullText() const { return m_full; }
+
+    [[nodiscard]] QSize sizeHint() const override
+    {
+        const QMargins margins = contentsMargins();
+        return {fontMetrics().horizontalAdvance(m_full) + 2 + margins.left() + margins.right(),
+                fontMetrics().height() + margins.top() + margins.bottom()};
+    }
+    [[nodiscard]] QSize minimumSizeHint() const override
+    {
+        const QSize full = sizeHint();
+        return {std::min(full.width(), 48), full.height()};
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setFont(font());
+        painter.setPen(palette().color(isEnabled() ? QPalette::Active : QPalette::Disabled,
+                                       QPalette::WindowText));
+        const QRect area = contentsRect();
+        painter.drawText(area, Qt::AlignLeft | Qt::AlignVCenter,
+                         fontMetrics().elidedText(m_full, m_mode, area.width()));
+    }
+    void resizeEvent(QResizeEvent* event) override
+    {
+        QLabel::resizeEvent(event);
+        updateToolTip();
+    }
+
+private:
+    void updateToolTip()
+    {
+        // The whole text on hover, only when some of it is hidden.
+        const bool cut = fontMetrics().horizontalAdvance(m_full) > contentsRect().width();
+        setToolTip(cut ? m_full : QString());
+    }
+
+    QString m_full;
+    Qt::TextElideMode m_mode;
+};
+
 namespace {
 
 // The detector half of the Detect & track capsule: the model's name and a
@@ -202,18 +265,21 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     m_view = new SequenceView(canvasCard);
     canvasBody->addWidget(m_view, 1);
     canvasBody->addWidget(buildTransport());
-    canvasCard->setMinimumHeight(240);
+    // Header (52) + the frame's minimum (130) + transport (54) + border: the card
+    // never claims less than its parts need, so a short window cannot
+    // squeeze the frame under the transport.
+    canvasCard->setMinimumHeight(238);
     split->addWidget(canvasCard);
 
     auto* lower = new QWidget(split);
     auto* lowerColumn = new QVBoxLayout(lower);
     lowerColumn->setContentsMargins(0, 0, 0, 0);
-    lowerColumn->setSpacing(10);
+    lowerColumn->setSpacing(8);
 
     // ---- Sequence timeline -------------------------------------------
     auto* timelineCard = card(lower);
     auto* timelineBody = new QVBoxLayout(timelineCard);
-    timelineBody->setContentsMargins(14, 12, 14, 10);
+    timelineBody->setContentsMargins(14, 10, 14, 8);
     timelineBody->setSpacing(4);
 
     // Fish activity across the sequence as a heat strip, with the track
@@ -267,7 +333,7 @@ ReviewPanel::ReviewPanel(QWidget* parent) : QWidget(parent)
     // a tab instead of squeezing the tables.
     m_tabs->addTab(buildAnalyticsRow(m_tabs), QStringLiteral("Charts"));
     tabBody->addWidget(m_tabs);
-    tabCard->setMinimumHeight(190);
+    tabCard->setMinimumHeight(154);
     lowerColumn->addWidget(tabCard, 1);
 
     split->addWidget(lower);
@@ -305,10 +371,11 @@ QWidget* ReviewPanel::buildHeader()
     auto* titleLine = new QHBoxLayout(m_titleRow);
     titleLine->setContentsMargins(0, 0, 0, 0);
     titleLine->setSpacing(8);
-    m_title = new QLabel(QStringLiteral("Nothing open"), m_titleRow);
+    // Middle elision keeps both ends of names like "video_001 to video_054".
+    m_title = new ElidedLabel(QStringLiteral("Nothing open"), Qt::ElideMiddle, m_titleRow);
     m_title->setObjectName(QStringLiteral("reviewTitle"));
     m_title->setProperty("role", "reviewTitle");
-    m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_title->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     titleLine->addWidget(m_title, 0, Qt::AlignVCenter);
     m_source = new QLabel(m_titleRow);
     m_source->setObjectName(QStringLiteral("annotationSource"));
@@ -316,8 +383,9 @@ QWidget* ReviewPanel::buildHeader()
     titleLine->addWidget(m_source, 0, Qt::AlignVCenter);
     titleLine->addStretch(1);
     titleColumn->addWidget(m_titleRow);
-    m_detail = typedLabel(QStringLiteral("Open a sequence or video from the Video library"), "dim",
-                          titles);
+    m_detail = new ElidedLabel(QStringLiteral("Open a sequence or video from the Video library"),
+                               Qt::ElideRight, titles);
+    m_detail->setProperty("type", "dim");
     m_detail->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     titleColumn->addWidget(m_detail);
     row->addWidget(titles, 1);
@@ -392,29 +460,8 @@ QWidget* ReviewPanel::buildHeader()
 
 void ReviewPanel::setMediaTitle(const QString& title, const QString& detail)
 {
-    m_titleText = title;
-    m_detailText = detail;
-    fitHeaderText();
-}
-
-void ReviewPanel::fitHeaderText()
-{
-    // Shortened with an ellipsis rather than cut mid-word at the edge; the
-    // whole text is the tooltip.
-    const auto fit = [](QLabel* label, const QString& text, int room) {
-        const QString shown = label->fontMetrics().elidedText(text, Qt::ElideMiddle, room);
-        label->setText(shown);
-        label->setToolTip(shown == text ? QString() : text);
-    };
-    // The title takes what its text needs, up to what is left beside the
-    // badge; middle elision keeps both ends of names like "video_001 to
-    // video_054" readable.
-    const int badge = m_source->isVisible() ? m_source->sizeHint().width() + 8 : 0;
-    const int room = std::max(60, m_titleRow->width() - badge);
-    const int needed = m_title->fontMetrics().horizontalAdvance(m_titleText) + 2;
-    m_title->setFixedWidth(std::min(needed, room));
-    fit(m_title, m_titleText, std::min(needed, room));
-    fit(m_detail, m_detailText, std::max(40, m_detail->width()));
+    m_title->setFullText(title);
+    m_detail->setFullText(detail);
 }
 
 void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent,
@@ -424,8 +471,6 @@ void ReviewPanel::setAnnotationSource(const QString& text, const QColor& accent,
     m_source->setToolTip(details.isEmpty() ? text : text + QStringLiteral("\n") + details);
     m_source->setVisible(!text.isEmpty() && !m_compactHeader);
     m_source->setText(m_source->fontMetrics().elidedText(text, Qt::ElideMiddle, 220));
-    // The title's room depends on the badge beside it.
-    QTimer::singleShot(0, this, &ReviewPanel::fitHeaderText);
     m_source->setStyleSheet(
         QStringLiteral("padding:1px 8px;border-radius:8px;font-size:11px;font-weight:600;color:%1;"
                        "background:rgba(%2,%3,%4,30);border:1px solid rgba(%2,%3,%4,90)")
@@ -498,8 +543,12 @@ void ReviewPanel::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     setCompactHeader(width() < 820);
-    // After the header has been laid out at the new width.
-    QTimer::singleShot(0, this, &ReviewPanel::fitHeaderText);
+    // A narrow transport keeps step and play; Home and End still jump.
+    const bool narrow = width() < 600;
+    if (!m_transport.isEmpty()) {
+        m_transport.first()->setVisible(!narrow);
+        m_transport.last()->setVisible(!narrow);
+    }
 }
 
 void ReviewPanel::setCompactHeader(bool compact)
@@ -684,7 +733,7 @@ QWidget* ReviewPanel::buildAnalyticsRow(QWidget* parent)
     grid->setContentsMargins(2, 10, 2, 2);
     row->setProperty("role", "bare");
     // Fits the tab page under the minimum tab card, so no chart is clipped.
-    row->setMinimumHeight(126);
+    row->setMinimumHeight(106);
     return row;
 }
 

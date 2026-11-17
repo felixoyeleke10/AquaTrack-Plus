@@ -8,6 +8,7 @@
 #include <QWidget>
 
 class QActionGroup;
+class ElidedLabel;
 class QLabel;
 class QProgressBar;
 class QPushButton;
@@ -98,8 +99,8 @@ private:
     aquatrack::ui::Filmstrip* m_filmstrip = nullptr;
 
     QWidget* m_titleRow = nullptr;  // the title with its status badge beside it
-    QLabel* m_title = nullptr;
-    QLabel* m_detail = nullptr;
+    ElidedLabel* m_title = nullptr;
+    ElidedLabel* m_detail = nullptr;
     QLabel* m_source = nullptr;
     QPushButton* m_import = nullptr;
     QPushButton* m_analyze = nullptr;
@@ -115,10 +116,6 @@ private:
     bool m_analysisRunning = false;
     bool m_compactHeader = false;
     QString m_sourceText;
-    // Full header texts; the labels show them shortened to fit.
-    QString m_titleText;
-    QString m_detailText;
-    void fitHeaderText();
 
     QPushButton* m_play = nullptr;
     QVector<QPushButton*> m_transport;  // the controls around Play

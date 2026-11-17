@@ -17,7 +17,9 @@ using namespace aquatrack::ui;
 
 SequenceView::SequenceView(QWidget* parent) : QWidget(parent)
 {
-    setMinimumSize(420, 190);
+    // Small enough that a 720 px tall window fits the canvas card's header
+    // and transport around it.
+    setMinimumSize(320, 130);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 

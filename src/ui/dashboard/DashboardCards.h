@@ -37,11 +37,19 @@ public:
     // Recomputes cell size and height; call after adding or removing items.
     void relayout();
     [[nodiscard]] QSize sizeHint() const override;
+    [[nodiscard]] QSize minimumSizeHint() const override;
+    // The grid is as tall as its rows at a given width, answered while the
+    // parent lays out, so a resize settles in one pass instead of the grid
+    // correcting its height afterwards (which made the dashboard shake).
+    [[nodiscard]] bool hasHeightForWidth() const override { return true; }
+    [[nodiscard]] int heightForWidth(int width) const override;
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    // Cell size for a viewport `width` wide.
+    [[nodiscard]] QSize cellFor(int width) const;
     int m_minimumWidth;
     int m_textHeight;
 };
