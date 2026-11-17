@@ -103,6 +103,7 @@ private:
     QLabel* m_source = nullptr;
     QPushButton* m_import = nullptr;
     QPushButton* m_analyze = nullptr;
+    QWidget* m_split = nullptr;  // Detect & track and its detector, one capsule
     QPushButton* m_detector = nullptr;
     QActionGroup* m_detectorGroup = nullptr;
     QString m_detectorCurrent;

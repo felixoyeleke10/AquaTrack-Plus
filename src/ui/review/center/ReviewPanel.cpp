@@ -14,6 +14,8 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -32,6 +34,55 @@ using namespace aquatrack::ui;
 namespace analytics = aquatrack::analytics;
 
 namespace {
+
+// The detector half of the Detect & track capsule: the model's name and a
+// chevron, painted over the capsule's own gradient so the two halves read
+// as one control. Lights up while hovered or while its menu is open.
+class ModelMenuButton final : public QPushButton {
+public:
+    using QPushButton::QPushButton;
+
+    [[nodiscard]] QSize sizeHint() const override
+    {
+        const int name = text().isEmpty() ? 0 : fontMetrics().horizontalAdvance(text()) + 12;
+        return {name + 30, QPushButton::sizeHint().height()};
+    }
+    [[nodiscard]] QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QRectF area = rect();
+        const bool open = menu() && menu()->isVisible();
+        if (isEnabled() && (underMouse() || isDown() || open)) {
+            // Rounded on the capsule's outer side only.
+            QPainterPath shape;
+            shape.setFillRule(Qt::WindingFill);
+            shape.addRoundedRect(area.adjusted(0, 0, -1, 0), 7, 7);
+            shape.addRect(area.adjusted(0, 0, -area.width() / 2, 0));
+            painter.fillPath(shape, QColor(255, 255, 255, isDown() || open ? 34 : 24));
+        }
+        const QColor ink = isEnabled() ? QColor(255, 255, 255, underMouse() || open ? 255 : 220)
+                                       : QColor(0x3a, 0x42, 0x52);
+        if (!text().isEmpty()) {
+            painter.setPen(ink);
+            painter.setFont(font());
+            painter.drawText(area.adjusted(12, 0, -28, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                             fontMetrics().elidedText(text(), Qt::ElideRight,
+                                                      int(area.width()) - 40));
+        }
+        // A light chevron rather than the style's solid triangle.
+        const QPointF centre(area.right() - 15, area.center().y() + (open ? -1 : 1));
+        QPen pen(ink, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter.setPen(pen);
+        const qreal flip = open ? -1 : 1;
+        painter.drawPolyline(QVector<QPointF>{centre + QPointF(-4, -2 * flip),
+                                              centre + QPointF(0, 2 * flip),
+                                              centre + QPointF(4, -2 * flip)});
+    }
+};
 
 // HH:MM:SS:FF, the frame within its second, as editing software shows it.
 QString timecode(qint64 milliseconds, int frameRate)
@@ -283,24 +334,35 @@ QWidget* ReviewPanel::buildHeader()
 
     // Detect & track with its detector as one split button: the action on
     // the left, which model runs it on the right.
-    auto* split = new QWidget(header);
-    split->setProperty("role", "bare");
+    auto* split = new QFrame(header);
+    split->setObjectName(QStringLiteral("detectCapsule"));
+    m_split = split;
     auto* splitRow = new QHBoxLayout(split);
     splitRow->setContentsMargins(0, 0, 0, 0);
     splitRow->setSpacing(0);
-    m_analyze = textButton(QStringLiteral("Detect && track"), split, "primary");
+    m_analyze = textButton(QStringLiteral("Detect && track"), split);
     m_analyze->setObjectName(QStringLiteral("analyzeMedia"));
     m_analyze->setIcon(glyphIcon(Glyph::Sparkle, 15, Qt::white, Qt::white));
     m_analyze->setToolTip(QStringLiteral(
         "Run the detector and tracker over every frame and load the tracks for review"));
     connect(m_analyze, &QPushButton::clicked, this, &ReviewPanel::analyzeRequested);
     splitRow->addWidget(m_analyze);
+    auto* divider = new QFrame(split);
+    divider->setObjectName(QStringLiteral("detectCapsuleDivider"));
+    divider->setFixedWidth(1);
+    splitRow->addWidget(divider);
     // Which detector Detect & track runs, switchable without leaving Review.
-    m_detector = new QPushButton(QStringLiteral("No detector"), split);
+    m_detector = new ModelMenuButton(QStringLiteral("No detector"), split);
     m_detector->setObjectName(QStringLiteral("detectorPicker"));
     m_detector->setCursor(Qt::PointingHandCursor);
-    m_detector->setMenu(new QMenu(m_detector));
+    m_detector->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    auto* menu = new QMenu(m_detector);
+    connect(menu, &QMenu::aboutToShow, m_detector, qOverload<>(&QWidget::update));
+    connect(menu, &QMenu::aboutToHide, m_detector, qOverload<>(&QWidget::update));
+    m_detector->setMenu(menu);
     splitRow->addWidget(m_detector);
+    splitRow->setAlignment(divider, Qt::AlignVCenter);
+    divider->setFixedHeight(18);
     row->addWidget(split, 0, Qt::AlignVCenter);
     setDetectorChoices({}, {}, false);
     column->addLayout(row);
@@ -425,11 +487,11 @@ void ReviewPanel::updateDetectorButton()
     QString name = m_detectorName;
     if (const int open = name.indexOf(QStringLiteral(" (")); open > 0)
         name.truncate(open);
-    m_detector->setText(m_compactHeader
-                            ? QString()
-                            : m_detector->fontMetrics()
-                                  .elidedText(name, Qt::ElideRight, 130)
-                                  .replace(QLatin1Char('&'), QStringLiteral("&&")));
+    // Painted by ModelMenuButton, which elides it itself; no mnemonic to escape.
+    m_detector->setText(m_compactHeader ? QString()
+                                        : m_detector->fontMetrics().elidedText(
+                                              name, Qt::ElideRight, 130));
+    m_detector->updateGeometry();
 }
 
 void ReviewPanel::resizeEvent(QResizeEvent* event)
@@ -454,8 +516,9 @@ void ReviewPanel::setMediaActionsEnabled(bool enabled)
 {
     m_import->setEnabled(enabled && !m_analysisRunning);
     m_analyze->setEnabled(enabled && !m_analysisRunning);
-    // One split button: both halves enable together.
+    // One capsule: both halves enable together.
     m_detector->setEnabled(enabled && !m_analysisRunning);
+    m_split->setEnabled(enabled && !m_analysisRunning);
 }
 
 void ReviewPanel::setAnalysisRunning(bool running)

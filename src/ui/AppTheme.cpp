@@ -138,23 +138,24 @@ QPushButton:disabled { background: @sunken; color: #3a4252; border-color: @lineS
 /* A button that opens a list of choices: the arrow sits centred on the right. */
 /* Review header: Detect & track and its detector as one split button. */
 QLabel[role="reviewTitle"] { font-size: 13px; font-weight: 600; color: @text; }
-QPushButton#analyzeMedia { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-QPushButton#detectorPicker {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3f78e0, stop:1 #3466c4);
-    border: 1px solid @accent; border-left: 1px solid rgba(255, 255, 255, 60);
-    border-top-left-radius: 0; border-bottom-left-radius: 0;
-    color: rgba(255, 255, 255, 215); font-size: 12px; font-weight: 600;
-    padding: 7px 26px 7px 11px;
-}
-QPushButton#detectorPicker:hover {
+#detectCapsule {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accentHover, stop:1 @accent);
-    color: #ffffff;
+    border: 1px solid @accentHover; border-radius: 8px;
 }
-QPushButton#detectorPicker:disabled {
-    background: @sunken; color: #3a4252; border-color: @lineSoft;
+#detectCapsule:disabled { background: @sunken; border-color: @lineSoft; }
+#detectCapsuleDivider { background: rgba(255, 255, 255, 64); border: none; }
+#detectCapsuleDivider:disabled { background: @lineSoft; }
+QPushButton#analyzeMedia {
+    background: transparent; border: none; border-radius: 0;
+    border-top-left-radius: 7px; border-bottom-left-radius: 7px;
+    padding: 7px 14px 7px 13px; color: #ffffff; font-weight: 600;
 }
-QPushButton#detectorPicker::menu-indicator {
-    subcontrol-origin: padding; subcontrol-position: right center; right: 9px;
+QPushButton#analyzeMedia:hover   { background: rgba(255, 255, 255, 24); }
+QPushButton#analyzeMedia:pressed { background: rgba(255, 255, 255, 34); }
+QPushButton#analyzeMedia:disabled { background: transparent; color: #3a4252; }
+QPushButton#detectorPicker {
+    background: transparent; border: none; padding: 0;
+    font-size: 12px; font-weight: 500;
 }
 
 QPushButton[role="primary"] {
