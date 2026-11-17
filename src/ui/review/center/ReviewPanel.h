@@ -119,8 +119,12 @@ private:
     void fitHeaderText();
 
     QPushButton* m_play = nullptr;
+    QVector<QPushButton*> m_transport;  // the controls around Play
     QSlider* m_frameSlider = nullptr;
-    QLabel* m_clock = nullptr;
+    QLabel* m_clock = nullptr;       // timecode of the frame on screen
+    QLabel* m_clockTotal = nullptr;  // "/ duration"
+    QLabel* m_frameCounter = nullptr;
+    void showClock(int frame, int total, qint64 timeMs);
 
     QTabWidget* m_tabs = nullptr;
     QTableWidget* m_trackTable = nullptr;

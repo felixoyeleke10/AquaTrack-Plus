@@ -7,6 +7,7 @@
 #include "ui/review/center/video/SequenceView.h"
 
 #include <QActionGroup>
+#include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -19,6 +20,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSplitter>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
@@ -30,6 +32,19 @@ using namespace aquatrack::ui;
 namespace analytics = aquatrack::analytics;
 
 namespace {
+
+// HH:MM:SS:FF, the frame within its second, as editing software shows it.
+QString timecode(qint64 milliseconds, int frameRate)
+{
+    const qint64 safe = std::max<qint64>(0, milliseconds);
+    const qint64 seconds = safe / 1000;
+    const int frame = int((safe % 1000) * std::max(1, frameRate) / 1000);
+    return QStringLiteral("%1:%2:%3:%4")
+        .arg(seconds / 3600, 2, 10, QLatin1Char('0'))
+        .arg((seconds / 60) % 60, 2, 10, QLatin1Char('0'))
+        .arg(seconds % 60, 2, 10, QLatin1Char('0'))
+        .arg(frame, 2, 10, QLatin1Char('0'));
+}
 
 QString clock(qint64 milliseconds)
 {
@@ -438,35 +453,100 @@ void ReviewPanel::setAnalysisProgress(int done, int total, const QString& text)
 QWidget* ReviewPanel::buildTransport()
 {
     auto* bar = new QWidget(this);
-    bar->setFixedHeight(46);
-    bar->setStyleSheet(QStringLiteral("background:%1;border-top:1px solid %2")
-                           .arg(palette::Chrome.name(), palette::Line.name()));
+    bar->setObjectName(QStringLiteral("transportBar"));
+    bar->setAttribute(Qt::WA_StyledBackground, true);
+    bar->setFixedHeight(54);
     auto* row = new QHBoxLayout(bar);
-    row->setContentsMargins(12, 0, 12, 0);
+    row->setContentsMargins(12, 0, 10, 0);
     row->setSpacing(6);
 
-    auto* back = iconButton(Glyph::Previous, QStringLiteral("Previous frame"), bar);
-    connect(back, &QPushButton::clicked, this, [this] { emit stepRequested(-1); });
-    row->addWidget(back);
+    // The deck: jump, step, play, step, jump, in one capsule.
+    auto* deck = new QFrame(bar);
+    deck->setProperty("role", "transportDeck");
+    auto* controls = new QHBoxLayout(deck);
+    controls->setContentsMargins(4, 3, 4, 3);
+    controls->setSpacing(2);
+    const auto control = [this, deck, controls](Glyph glyph, const QString& tip, auto&& action) {
+        auto* button = new QPushButton(deck);
+        button->setProperty("role", "transport");
+        // Phosphor's carets are drawn smaller than its skip marks; size them
+        // up so the four controls read as one family.
+        const bool step = glyph == Glyph::StepBack || glyph == Glyph::StepForward;
+        const int size = step ? 18 : 14;
+        button->setIcon(glyphIcon(glyph, size, palette::TextSecondary, palette::TextPrimary));
+        button->setIconSize(QSize(size, size));
+        button->setToolTip(tip);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setEnabled(false);
+        connect(button, &QPushButton::clicked, this, action);
+        controls->addWidget(button);
+        m_transport << button;
+        return button;
+    };
+    control(Glyph::JumpStart, QStringLiteral("Go to the first frame  (Home)"),
+            [this] { emit frameRequested(1); })
+        ->setObjectName(QStringLiteral("transportStart"));
+    control(Glyph::StepBack, QStringLiteral("Back one frame  (Left)\nShift+Left: back one second"),
+            [this] { emit stepRequested(-1); })
+        ->setObjectName(QStringLiteral("transportBack"));
 
-    m_play = iconButton(Glyph::Play, QStringLiteral("Play or pause"), bar, "icon", 19);
+    m_play = new QPushButton(deck);
+    m_play->setObjectName(QStringLiteral("transportPlay"));
+    m_play->setProperty("role", "play");
+    m_play->setIconSize(QSize(16, 16));
+    m_play->setToolTip(QStringLiteral("Play / pause  (Space or K)"));
+    m_play->setCursor(Qt::PointingHandCursor);
+    m_play->setFocusPolicy(Qt::NoFocus);
     m_play->setEnabled(false);
     connect(m_play, &QPushButton::clicked, this, &ReviewPanel::playToggled);
-    row->addWidget(m_play);
+    controls->addSpacing(3);
+    controls->addWidget(m_play);
+    controls->addSpacing(3);
+    setPlaying(false);
 
-    auto* forward = iconButton(Glyph::Next, QStringLiteral("Next frame"), bar);
-    connect(forward, &QPushButton::clicked, this, [this] { emit stepRequested(1); });
-    row->addWidget(forward);
-    row->addSpacing(8);
+    control(Glyph::StepForward,
+            QStringLiteral("Forward one frame  (Right)\nShift+Right: forward one second"),
+            [this] { emit stepRequested(1); })
+        ->setObjectName(QStringLiteral("transportForward"));
+    control(Glyph::JumpEnd, QStringLiteral("Go to the last frame  (End)"),
+            [this] { emit frameRequested(std::max(1, m_totalFrames)); })
+        ->setObjectName(QStringLiteral("transportEnd"));
+    row->addWidget(deck, 0, Qt::AlignVCenter);
+    row->addSpacing(12);
 
-    m_clock = typedLabel(QStringLiteral("00:00:00 / 00:00:00"), "mono", bar);
-    m_clock->setMinimumWidth(140);
-    row->addWidget(m_clock);
+    // Timecode: where the playhead is, bright; how long it all is, quiet.
+    m_clock = new QLabel(QStringLiteral("00:00:00:00"), bar);
+    m_clock->setProperty("role", "timecode");
+    m_clock->setToolTip(QStringLiteral("Hours:minutes:seconds:frames"));
+    m_clock->setEnabled(false);
+    row->addWidget(m_clock, 0, Qt::AlignVCenter);
+    m_clockTotal = new QLabel(QStringLiteral("/ 00:00:00"), bar);
+    m_clockTotal->setProperty("role", "timecodeTotal");
+    row->addWidget(m_clockTotal, 0, Qt::AlignVCenter);
+    row->addSpacing(14);
 
     m_frameSlider = new QSlider(Qt::Horizontal, bar);
+    m_frameSlider->setObjectName(QStringLiteral("frameScrubber"));
     m_frameSlider->setEnabled(false);
+    m_frameSlider->setCursor(Qt::PointingHandCursor);
     connect(m_frameSlider, &QSlider::valueChanged, this, &ReviewPanel::frameRequested);
     row->addWidget(m_frameSlider, 1);
+    row->addSpacing(12);
+
+    m_frameCounter = new QLabel(QStringLiteral("Frame –"), bar);
+    m_frameCounter->setProperty("role", "frameCounter");
+    m_frameCounter->setMinimumWidth(m_frameCounter->fontMetrics().horizontalAdvance(
+                                        QStringLiteral("Frame 00,000 / 00,000")) + 8);
+    m_frameCounter->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    row->addWidget(m_frameCounter, 0, Qt::AlignVCenter);
+
+    auto* divider = new QFrame(bar);
+    divider->setProperty("role", "transportDivider");
+    divider->setFixedSize(1, 22);
+    row->addSpacing(6);
+    row->addWidget(divider, 0, Qt::AlignVCenter);
+    row->addSpacing(2);
 
     auto* snapshot = iconButton(Glyph::Camera, QStringLiteral("Save a snapshot of this frame"), bar);
     connect(snapshot, &QPushButton::clicked, this, &ReviewPanel::snapshotRequested);
@@ -518,9 +598,12 @@ void ReviewPanel::configureSequence(int frames, int frameRate, qint64 durationMs
     m_durationMs = durationMs >= 0 ? durationMs : qint64(frames) * 1000 / m_frameRate;
     setMediaActionsEnabled(frames > 0);
     m_play->setEnabled(frames > 0);
+    for (auto* button : m_transport)
+        button->setEnabled(frames > 0);
     m_frameSlider->setEnabled(frames > 0);
+    m_clock->setEnabled(frames > 0);
     if (frames <= 0) {
-        m_clock->setText(QStringLiteral("00:00:00 / 00:00:00"));
+        showClock(0, 0, 0);
         setPlaying(false);
     }
     const QSignalBlocker blocker(m_frameSlider);
@@ -541,15 +624,35 @@ void ReviewPanel::showFrame(const QImage& image, const QVector<aquatrack::Ground
     m_timeline->setCurrentFrame(frame);
     m_activity->setPlayhead(timeMs);
     m_filmstrip->setCurrentFrame(frame);
-    m_clock->setText(QStringLiteral("%1 / %2").arg(
-        clock(timeMs),
+    showClock(frame, total, timeMs);
+}
+
+void ReviewPanel::showClock(int frame, int total, qint64 timeMs)
+{
+    if (total <= 0) {
+        m_clock->setText(QStringLiteral("00:00:00:00"));
+        m_clockTotal->setText(QStringLiteral("/ 00:00:00"));
+        m_frameCounter->setText(QStringLiteral("Frame –"));
+        return;
+    }
+    const QLocale locale = QLocale::system();
+    m_clock->setText(timecode(timeMs, m_frameRate));
+    m_clockTotal->setText(QStringLiteral("/ %1").arg(
         clock(m_durationMs > 0 ? m_durationMs : qint64(total) * 1000 / m_frameRate)));
+    m_frameCounter->setText(QStringLiteral("Frame %1 / %2")
+                                .arg(locale.toString(frame), locale.toString(total)));
 }
 
 void ReviewPanel::setPlaying(bool playing)
 {
-    m_play->setIcon(glyphIcon(playing ? Glyph::Pause : Glyph::Play, 19, palette::TextSecondary,
-                              palette::Accent));
+    // White on the accent disc; the triangle sits a hair right of centre,
+    // where the eye expects it.
+    m_play->setIcon(glyphIcon(playing ? Glyph::Pause : Glyph::Play, 16, Qt::white, Qt::white));
+    m_play->setToolTip(playing ? QStringLiteral("Pause  (Space or K)")
+                               : QStringLiteral("Play  (Space or K)"));
+    m_play->setProperty("playing", playing);
+    m_play->style()->unpolish(m_play);
+    m_play->style()->polish(m_play);
 }
 
 void ReviewPanel::setAnalytics(const std::vector<analytics::TimeBin>& bins,

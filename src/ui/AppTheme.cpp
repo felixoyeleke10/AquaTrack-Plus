@@ -246,6 +246,47 @@ QCheckBox::indicator {
 }
 QCheckBox::indicator:checked { background: @accent; border-color: @accent; }
 
+/* ---- Review transport ------------------------------------------------ */
+#transportBar { background: @chrome; border-top: 1px solid @line; }
+QFrame[role="transportDeck"] {
+    background: @sunken; border: 1px solid @lineSoft; border-radius: 21px;
+}
+QPushButton[role="transport"] {
+    background: transparent; border: none; border-radius: 15px; padding: 0;
+    min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+}
+QPushButton[role="transport"]:hover   { background: @surfaceRaised; }
+QPushButton[role="transport"]:pressed { background: @surface; }
+QPushButton[role="play"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accentHover, stop:1 @accent);
+    border: 1px solid @accentHover; border-radius: 17px; padding: 0 0 0 1px;
+    min-width: 34px; max-width: 34px; min-height: 34px; max-height: 34px;
+}
+QPushButton[role="play"][playing="true"] { padding: 0; }
+QPushButton[role="play"]:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #78abff, stop:1 @accentHover);
+}
+QPushButton[role="play"]:pressed { background: @accent; }
+QPushButton[role="play"]:disabled { background: @surfaceRaised; border-color: @line; }
+QLabel[role="timecode"] {
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 15px; font-weight: 600;
+    color: @text; letter-spacing: 0.5px;
+}
+QLabel[role="timecode"]:disabled { color: @textDim; }
+QLabel[role="timecodeTotal"] {
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 12px; color: @textDim;
+}
+QLabel[role="frameCounter"] {
+    font-family: "Cascadia Mono", "Consolas", monospace; font-size: 11px; color: @textDim;
+}
+QFrame[role="transportDivider"] { background: @line; border: none; }
+#frameScrubber::groove:horizontal { height: 4px; }
+#frameScrubber::handle:horizontal {
+    width: 12px; height: 12px; margin: -5px 0; border-radius: 7px;
+    background: #ffffff; border: 2px solid @accent;
+}
+#frameScrubber::handle:horizontal:disabled { background: @surfaceRaised; border-color: @line; }
+
 /* ---- Sliders --------------------------------------------------------- */
 QSlider::groove:horizontal { height: 4px; background: @line; border-radius: 2px; }
 QSlider::sub-page:horizontal {

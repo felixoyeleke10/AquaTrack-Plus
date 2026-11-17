@@ -66,6 +66,11 @@ enum class Glyph {
     ListView,
     GridView,
     Inspect,
+    // Transport: jump to either end, step one frame.
+    JumpStart,
+    JumpEnd,
+    StepBack,
+    StepForward,
 };
 
 enum class GlyphStyle {

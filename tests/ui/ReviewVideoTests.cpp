@@ -202,10 +202,7 @@ int main(int argc, char* argv[])
     settle(300);
     heartbeat.restart();
     longestStall = 0;
-    QPushButton* playButton = nullptr;
-    for (auto* button : window.findChildren<QPushButton*>())
-        if (button->toolTip() == QStringLiteral("Play or pause"))
-            playButton = button;
+    auto* playButton = window.findChild<QPushButton*>(QStringLiteral("transportPlay"));
     requireTest(playButton && playButton->isEnabled(), "play button available");
     playButton->click();
     settle(2500);

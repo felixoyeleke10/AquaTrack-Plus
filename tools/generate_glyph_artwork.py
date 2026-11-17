@@ -71,10 +71,14 @@ GLYPHS: list[tuple[str, str]] = [
     ("ListView", "list-bullets"),
     ("GridView", "grid-four"),
     ("Inspect", "magnifying-glass-plus"),
+    ("JumpStart", "skip-back"),
+    ("JumpEnd", "skip-forward"),
+    ("StepBack", "caret-left"),
+    ("StepForward", "caret-right"),
 ]
 
 # Transport controls read better solid than outlined, in every style.
-SOLID = {"Play", "Pause"}
+SOLID = {"Play", "Pause", "JumpStart", "JumpEnd", "StepBack", "StepForward"}
 
 ALLOWED_ELEMENTS = {"path", "circle", "rect", "line", "polyline", "polygon", "ellipse"}
 
